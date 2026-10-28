@@ -1177,6 +1177,14 @@ document.querySelectorAll('[data-cal]').forEach(el => el.addEventListener('click
 $('#pgo').addEventListener('click', calClose);
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42).toLowerCase(); if (!S || S.addr !== a) { $('#addr').value = a; loadWallet(a); } } });
 $('#ver').textContent = VERSION;
+/* platform volume of the last 24 hours (all perpetual markets), shown in the header and refreshed every minute */
+async function loadPlatform() {
+  try {
+    const d = await info({ type: 'allMarketTickers' }), p = d.filter(x => x.instrumentId < 1e4), vol = p.reduce((a, x) => a + n(x.dayNtlVlm), 0), spot = d.filter(x => x.instrumentId >= 1e4).reduce((a, x) => a + n(x.dayNtlVlm), 0);
+    $('#platV').textContent = '$' + big(vol); $('#plat').title = `Volume of all ${p.length} perpetual markets on TxFlow over the last 24 hours (rolling window). Spot: $${big(spot)}. Updated ${new Date().toLocaleTimeString('en-US', { hour12: false })}.`;
+  } catch (e) { $('#platV').textContent = '—'; }
+}
+loadPlatform(); setInterval(() => { if (!document.hidden) loadPlatform(); }, 60000);
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
 { const h = location.hash.slice(1); if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
 })();
