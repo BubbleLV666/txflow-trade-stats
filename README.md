@@ -21,7 +21,9 @@ Deep link: `index.html#0x…address`.
   TP/SL, trigger and TWAP orders (current and history).
 * Funding (by market, with average rates), deposits / withdrawals / transfers (with chains and non-perp movements listed separately).
 * Spot balances and spot fills, vault deposits (equity, cost basis, PnL, TVL, lock-up) and vault details if the address is a vault.
-* Referral overview, points / week countdown, Trade Unlock, Volume Ascent, Trader Royale and new-user-bonus status.
+* Equity and PnL history (daily charts and a daily table), period summaries with APR and max drawdown, all-time volume (from the exchange statistics).
+* Order history, trade history (positions from open to close, built from fills), TP/SL orders and their history (also shown in Open orders and in the positions table).
+* Referral overview, points / week countdown, points distributed so far (estimated from the docs), Trade Unlock, Volume Ascent, competition leaderboards (Trader Royale, Bull Pit), new-user-bonus status and the Rewards hub.
 
 Cards are toggled with checkboxes ("Cards ⚙"); the choice is stored in the browser.
 
@@ -41,15 +43,16 @@ All calls are `POST /info` with a JSON body: `clearinghouseState` (account, posi
 `userNonFundingLedgerUpdates` (deposits, withdrawals, transfers), `frontendOpenOrders`, `historicalOrders`, `feeTierRates`, `perpMeta`,
 `marketTicker`, `spotClearinghouseState`, spot `userFills`, `uservaultequities`, `vaultDetails`, `userReferralOverview`, `tpslOrders`,
 `triggerOrders`, `historicalTriggerOrders`, `twapHistory`, `userTwapSliceFills`, `getUserPointsOverview`, `getTradeUnlockActivity`,
-`activityInfo`, `traderRoyaleInfo`, `newUserBonusInfo`.
+`activityInfo`, `traderRoyaleInfo`, `newUserBonusInfo`, `multiUserPnl`, `multiUserEquitySnapshots`, `multiUserApr`, `userOverview`, `historicalTpslOrders`,
+`pnlRoiInfo`, `traderRoyaleLeaderboardPage`, `pnlRoiLeaderboardPage`, `rewardsHubList`.
 List endpoints return at most 300 rows, newest first, and ignore `offset`, so the app walks back in time with `endTimeMs`.
 The API is not officially documented yet (docs.txflow.com lists "Platform API: Coming Soon"); these calls were taken from what the
 TxFlow web app itself uses, so they may change without notice.
 
 ## Differences from the Arcus version
-* No leaderboard tab, per-address rank, equity/PnL history chart, rate-limit/leverage-settings cards or subaccounts:
-  the public TxFlow API has no endpoints for them (leaderboards mask addresses). Points are returned only to the signed-in owner.
-* Volume for today / 7 d / 14 d comes from daily volumes (`feeTierRates`, last 14 days only); longer ranges are computed from fills.
+* No leaderboard tab with per-address rank, rate-limit/leverage-settings cards or subaccounts: the public TxFlow API has no endpoints for them
+  (competition leaderboards mask addresses). Points, their history and ranks are returned only to the signed-in owner, so the dashboard cannot show them.
+* Volume for 24 h / 7 d / 30 d / 90 d / all time comes from the exchange statistics (`userOverview`); the fee tier uses the last 14 days of daily volume (`feeTierRates`); period figures are computed from fills.
 * Fee tier is estimated from the 14-day volume (TxFlow docs: rolling 14 days, assessed at the end of each UTC day).
 * Perpetuals only; spot balances, vaults and prediction markets are not included.
 

@@ -36,7 +36,7 @@ async function info(body, w = 1) {
     if (r.status === 429) { bucket.tokens = 0; await sleep(1500 * (a + 1)); continue; }
     if (r.status >= 500) { await sleep(700 * (a + 1)); continue; }
     let data = null; try { data = await r.json(); } catch (e) { }
-    if (!r.ok || (data && !Array.isArray(data) && (data.status === 'err' || (data.message && Object.keys(data).length === 1)))) { const err = new Error((data && (data.message || data.reason)) || ('HTTP ' + r.status)); err.status = r.status; throw err; }
+    if (!r.ok || (data && !Array.isArray(data) && (data.status === 'err' || (data.code != null && data.code !== 0) || (data.message && Object.keys(data).length === 1)))) { const err = new Error((data && (data.message || data.reason || data.msg)) || ('HTTP ' + r.status)); err.status = r.status; throw err; }
     return data;
   }
   throw new Error('API unavailable or rate limit exceeded, please try again later');
@@ -59,7 +59,7 @@ async function pullBack(body, o) {
 /* ---- API rows -> the shape the UI works with (the UI keeps times in microseconds) */
 const US = 1000;
 const coinName = c => String(c || '').replace(/-USDC$/, '');
-const normFill = f => ({ tradeId: f.tid + '_' + f.oid, createdAt: f.time * US, size: f.sz, price: f.px, fee: f.fee, closedPnl: f.closedPnl, role: /maker/i.test(f.tradeSide) ? 'MAKER' : 'TAKER', side: f.side === 'B' ? 'BUY' : 'SELL', marketDisplayName: coinName(f.coin), marketId: f.coin,
+const normFill = f => ({ tid: Number(f.tid) || 0, tradeId: f.tid + '_' + f.oid, createdAt: f.time * US, size: f.sz, price: f.px, fee: f.fee, closedPnl: f.closedPnl, role: /maker/i.test(f.tradeSide) ? 'MAKER' : 'TAKER', side: f.side === 'B' ? 'BUY' : 'SELL', marketDisplayName: coinName(f.coin), marketId: f.coin,
   lev: f.leverage, mmode: f.marginMode, startPos: parseFloat(f.startPosition) || 0, twap: !!f.twapId, reduceOnly: !!f.reduceOnly, feeToken: f.feeToken, instrumentId: f.instrumentId, hash: f.hash });
 const normFunding = x => ({ time: x.time * US, payment: x.usdc, marketDisplayName: coinName(x.coin), rate: x.fundingRate, szi: x.szi });
 const normSpotFill = f => ({ ...normFill(f), marketDisplayName: f.symbol || f.coin });
@@ -79,7 +79,7 @@ const normTransfer = (x, me) => {
 };
 const normOpen = o => ({ marketDisplayName: coinName(o.coin), side: o.side === 'B' ? 'BUY' : 'SELL', price: o.limitPx, remainingSize: o.sz, timeInForce: o.tif, createdAt: o.timestamp * US,
   orderType: o.orderType, reduceOnly: !!o.reduceOnly, isTrigger: !!o.isTrigger, isTpsl: !!o.isPositionTpsl, triggerPx: o.triggerPx, triggerCondition: o.triggerCondition, origSize: o.origSz, marginMode: o.marginMode, leverage: o.leverage, cloid: o.cloid, instrumentId: o.asset });
-const normOrder = x => { const o = x.order || {}, avg = parseFloat(o.avgFillPrice); return { status: String(x.status || '').toUpperCase().replace('CANCELLED', 'CANCELED'), timeInForce: o.tif, price: o.limitPx, originalSize: o.origSz, filledSize: avg > 0 ? parseFloat(o.filledAmount) / avg : 0, avgFillPrice: o.avgFillPrice, side: o.side === 'B' ? 'BUY' : 'SELL', createdAt: o.timestamp * US, updatedAt: (x.statusTimestamp || o.timestamp) * US,
+const normOrder = x => { const o = x.order || {}, avg = parseFloat(o.avgFillPrice); return { oid: o.oid, status: String(x.status || '').toUpperCase().replace('CANCELLED', 'CANCELED'), timeInForce: o.tif, price: o.limitPx, originalSize: o.origSz, filledSize: avg > 0 ? parseFloat(o.filledAmount) / avg : 0, avgFillPrice: o.avgFillPrice, side: o.side === 'B' ? 'BUY' : 'SELL', createdAt: o.timestamp * US, updatedAt: (x.statusTimestamp || o.timestamp) * US,
   marketDisplayName: coinName(o.coin), orderType: o.orderType, reduceOnly: !!o.reduceOnly, pnl: o.pnl, roe: o.roe, entryPrice: o.entryPrice, marginMode: o.marginMode, leverage: o.leverage, dir: o.dir }; };
 function normAccount(ch, transfers) {
   const ms = ch.marginSummary || {}, positions = {};
@@ -88,6 +88,7 @@ function normAccount(ch, transfers) {
     positions[i] = { marketId: p.coin, marketDisplayName: coinName(p.coin), size: p.szi, markPx: p.markPx, positionValueNotional: p.positionValue, unrealizedPnl: p.unrealizedPnl, averageEntryPrice: p.entryPx,
       leverage: lv.value, marginMode: /iso/i.test(lv.type || '') ? 'ISOLATED' : 'CROSS', marginUsed: p.marginUsed, liquidationPx: p.liquidationPx,
       instrumentId: p.asset, roe: p.returnOnEquity, adl: p.adlQuantile, marginRatio: p.marginRatio, cumFee: p.cumFee, closedPnl: p.closedPnl, maxLeverage: p.maxLeverage,
+      mode: ap.type, tpsl: (ap.tpsl || []).map(t => ({ tp: t.tpTriggerPrice, sl: t.slTriggerPrice, tpOrderPrice: t.tpOrderPrice, slOrderPrice: t.slOrderPrice, qty: t.quantity, tpType: t.tpOrderType, slType: t.slOrderType, at: t.createTime ? t.createTime * US : null })),
       fundingSinceOpen: p.cumFunding && p.cumFunding.sinceOpen, fundingSinceChange: p.cumFunding && p.cumFunding.sinceChange, updatedAt: p.updateTime ? p.updateTime * US : null };
   });
   let dep = 0, pd = 0, pw = 0;
@@ -99,7 +100,7 @@ function normAccount(ch, transfers) {
 /* ---------------------------------------------------------------- state */
 let S = null, runId = 0, autoTimer = null;
 const OLD_CARDS = ['summary', 'volume', 'pnl', 'risk', 'positions', 'activity', 'curve', 'bymarket', 'daily', 'hourly', 'orderflow', 'feetier', 'funding', 'transfers', 'orders', 'fills'];
-const DEFAULT_CARDS = [...OLD_CARDS, 'volday', 'leverage', 'trades', 'tickers', 'spot', 'vaults', 'referral', 'campaigns', 'conditional', 'leaderboards'];
+const DEFAULT_CARDS = [...OLD_CARDS, 'volday', 'leverage', 'trades', 'spot', 'vaults', 'referral', 'campaigns', 'conditional', 'leaderboards', 'equity', 'pnlchart', 'perf', 'dailytable', 'rewards', 'orderhist', 'tradehist'];
 let enabled = new Set(store.get('cards', DEFAULT_CARDS));
 { const seen = new Set(store.get('cards_seen', OLD_CARDS)); DEFAULT_CARDS.forEach(id => { if (!seen.has(id)) enabled.add(id); }); store.set('cards_seen', DEFAULT_CARDS); store.set('cards', [...enabled]); }   // cards added in later versions switch on automatically
 
@@ -322,6 +323,8 @@ const TIPS = {
 
 const tipFor = k => TIPS[String(k).replace(/<[^>]*>/g, '').trim()];
 const row = (k, v, title) => { const t = title || tipFor(k); return `<div class="row"${t ? ` data-tip="${esc(t)}"` : ''}><span>${k}</span><b class="num">${v}</b></div>`; };
+const SHOWN = { fills: 100, orders: 100, ohist: 100, trades: 50 };
+const moreNote = (k, total, what) => total <= SHOWN[k] ? '' : `<p class="note">Showing the latest ${fmt(SHOWN[k], 0)} of ${fmt(total, 0)} ${what}. <button class="linkbtn" data-more="${k}" type="button">Show 200 more</button> <button class="linkbtn" data-more="${k}:all" type="button">Show all</button></p>`;
 const CARDS = [
   { id: 'summary', title: 'Account', w: 4, render(S) {
     const a = S.account, eq = n(a.equity), hasDep = a.netDeposits != null, dep = n(a.netDeposits), pnl = eq + n(a.vaultEquity) - dep;
@@ -337,7 +340,7 @@ const CARDS = [
       row('First fill', S.fills.length && S.fillsDone && !getPeriod(S) && S.fills.length < parseInt($('#depth').value, 10) ? dtl(Math.min(...S.fills.map(x => x.createdAt))) : '—', 'shown when the whole fill history is loaded') +
       row('Open positions / orders', `${fmt(Object.keys(a.positions || {}).length, 0)} / ${fmt((S.openOrders || []).length, 0)}`) +
       (a.stateTime ? row('State as of', dtl(a.stateTime * US)) : '') + `</div>` +
-      `<p class="note">Perpetuals account. Spot balances, vaults and campaigns have their own cards. Equity history is not available from the public API.</p>`;
+      `<p class="note">Perpetuals account. Spot balances, vaults and campaigns have their own cards; the equity and PnL history is in the charts below.</p>`;
   } },
   { id: 'volume', title: 'Volume & fees', w: 4, render(S) {
     const V = S.vlm, t = feeInfo(S), dep = n(S.account.netDeposits), pr = getPeriod(S), F = S.fs;
@@ -347,11 +350,13 @@ const CARDS = [
       row('Average fill size', F.n ? money(F.vol / F.n, 0) : '—') + row('Turnover / deposit', S.account.netDeposits != null && dep > 0 ? fmt(F.vol / dep, 1) + '×' : '—') +
       feeRow + row('Volume, last 14 days', V ? '$' + big(V.d14) : '—') + `</div>` +
       (S.fillsDone ? '' : '<p class="note">Period fills are still loading…</p>') + (S.fillsCapped ? '<p class="note">Reached the 100,000-fill limit — the period is not fully counted.</p>' : '');
-    return `<div class="big num">${V ? '$' + big(V.d14) : '—'}</div><div class="muted" style="margin:-6px 0 6px">last 14 days · the fee tier basis</div><div class="rows">` +
-      row('Today (UTC)', V ? '$' + big(V.today) : '—') + row('Last 7 days', V ? '$' + big(V.d7) : '—', 'the last 6 completed UTC days plus today') +
-      row('Turnover / deposit (14d)', V && S.account.netDeposits != null && dep > 0 ? fmt(V.d14 / dep, 1) + '×' : '—') +
+    const OV = S.hist && S.hist.ov || {}, ov = k => OV[k] ? '$' + big(n(OV[k].volume)) : '—', all = OV.ALLTIME ? n(OV.ALLTIME.volume) : null;
+    return `<div class="big num">${all != null ? '$' + big(all) : V ? '$' + big(V.d14) : '—'}</div><div class="muted" style="margin:-6px 0 6px">${all != null ? 'volume, all time' : 'last 14 days · the fee tier basis'}</div><div class="rows">` +
+      row('Today (UTC)', V ? '$' + big(V.today) : '—') + row('Last 24 hours', ov('24H')) + row('Last 7 days', ov('7D')) + row('Last 30 days', ov('30D')) + row('Last 90 days', ov('90D')) +
+      row('Last 14 days (fee tier basis)', V ? '$' + big(V.d14) : '—', 'completed UTC days plus today') +
+      row('Turnover / deposit (all time)', all != null && S.account.netDeposits != null && dep > 0 ? fmt(all / dep, 1) + '×' : '—') +
       row('Fees (loaded fills)', S.fillsDone || S.fills.length ? money(F.fees) : '—', 'trading fees paid on the fills loaded below') + feeRow + `</div>` +
-      `<p class="note">The public API gives daily volume only for the last 14 days. Pick a period above (a week, a custom range or “All time”) for fills-based volume.</p>`;
+      `<p class="note">Volumes come from the exchange's own statistics. Pick a period above (a week, a custom range or “All time”) for fills-based volume and fees.</p>`;
   } },
   { id: 'pnl', title: 'Profit', w: 4, render(S) {
     const a = S.account, hasDep = a.netDeposits != null, eqp = n(a.equity) + n(a.vaultEquity) - n(a.netDeposits), pr = getPeriod(S), F = S.fs;
@@ -361,12 +366,15 @@ const CARDS = [
       return `<div class="big num ${cls(net)}">${smoney(net)}</div><div class="rows">` + row('Period', esc(pr.label)) +
         row('Realized PnL (closedPnl)', `<span class="${cls(F.pnl)}">${smoney(F.pnl)}</span>`) + row('Fees', money(-F.fees)) +
         row('Funding over period', `<span class="${cls(pf)}">${smoney(pf)}</span>`) +
+        (() => { const hs = histSeries(S, 'pnl'); return S.hist && hs.length ? row('PnL by exchange stats', `<span class="${cls(hs[hs.length - 1][1])}">${smoney(hs[hs.length - 1][1])}</span>`, 'change of the exchange-reported cumulative PnL (realized + unrealized, without deposits and withdrawals) over the period, in whole UTC days') : ''; })() +
         row('PnL per $1M volume', F.vol > 0 ? smoney(net / F.vol * 1e6, 0) : '—') + `</div>` +
         `<p class="note">Big number = realized − fees + funding.${S.funding && S.funding.length >= 30000 ? ' Funding was capped at 30,000 payments, the period may be incomplete.' : ''}</p>`;
     }
     const net = F.pnl - F.fees;
     return `<div class="big num ${cls(hasDep ? eqp : net)}">${hasDep ? smoney(eqp) : smoney(net)}</div><div class="rows">` +
       row('PnL by account', hasDep ? `<span class="${cls(eqp)}">${smoney(eqp)}</span>` : '—', 'equity + vault equity − net deposits: includes unrealized PnL, fees, funding and any exchange credits') +
+      (S.hist && S.hist.ov.ALLTIME ? row('PnL by exchange stats', `<span class="${cls(n(S.hist.ov.ALLTIME.pnl))}">${smoney(n(S.hist.ov.ALLTIME.pnl))}</span>`, 'all-time PnL reported by TxFlow (realized + unrealized, without deposits and withdrawals; transfers from other addresses count as deposits)') +
+        row('ROE (exchange stats)', `<span class="${cls(n(S.hist.ov.ALLTIME.roe))}">${sgn(n(S.hist.ov.ALLTIME.roe), 2)}%</span>`) + row('Max drawdown', fmt(n(S.hist.ov.ALLTIME.maxDrawdown), 2) + '%') : '') +
       row('Realized PnL (loaded fills)', S.fills.length ? `<span class="${cls(F.pnl)}">${smoney(F.pnl)}</span>` : '—', 'sum of closedPnl over the fills loaded below; unrealized is not included') +
       row('Fees (loaded fills)', S.fills.length ? money(-F.fees) : '—') +
       row('Funding (loaded history)', fund == null ? '—' : `<span class="${cls(fund)}">${smoney(fund)}</span>`) +
@@ -391,10 +399,11 @@ const CARDS = [
   { id: 'positions', title: 'Open positions', sub: 'now', w: 12, render(S) {
     const R = S.risk; if (!R.rows.length) return '<div class="empty">No open positions</div>';
     const rows = R.rows.slice().sort((a, b) => b.notl - a.notl);
+    const tpslCell = (p, k, mid) => { const v = (p.tpsl || []).filter(t => n(t[k])); return v.length ? v.map(t => `${pxf(n(t[k]))}<br><span class="muted">${mid ? sgn((n(t[k]) - mid) / mid * 100, 2) + '%' : ''} · ${n(t.qty) ? fmt(n(t.qty), 4) : 'all'}</span>`).join('<br>') : '—'; };
     const tk = S.tickers || {}, adlTip = 'Auto-deleveraging quantile reported by the exchange: 1 = lowest priority, 5 = first in line to be deleveraged.';
-    return `<div class="scroll"><table><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>Size $</th><th>Entry</th><th>Mark</th><th>uPnL</th><th>uPnL %</th><th title="Return on the margin used by this position (reported by the exchange)">ROE %</th><th>Leverage</th><th>Max lev.</th><th>Margin</th><th>Liq. price</th><th>To liq.</th><th title="${adlTip}">ADL</th><th title="Realized PnL of this position since it was opened (closedPnl from the exchange)">Realized</th><th title="Fees paid on this position since it was opened">Fees</th><th title="Funding of this position since it was opened, as reported by the exchange (+ received, − paid)">Funding since open</th><th title="Current funding rate per hour (market data)">Funding rate/h</th><th>Updated</th></tr></thead><tbody>` +
+    return `<div class="scroll"><table><thead><tr><th>Market</th><th>Side</th><th>Size</th><th>Size $</th><th>Entry</th><th>Mark</th><th>uPnL</th><th>uPnL %</th><th title="Return on the margin used by this position (reported by the exchange)">ROE %</th><th>Leverage</th><th>Max lev.</th><th>Margin</th><th>Liq. price</th><th>To liq.</th><th title="Take-profit trigger price set on this position, with the distance from the mark price; “all” = the whole position">Take profit</th><th title="Stop-loss trigger price set on this position, with the distance from the mark price">Stop loss</th><th title="${adlTip}">ADL</th><th title="Realized PnL of this position since it was opened (closedPnl from the exchange)">Realized</th><th title="Fees paid on this position since it was opened">Fees</th><th title="Funding of this position since it was opened, as reported by the exchange (+ received, − paid)">Funding since open</th><th title="Current funding rate per hour (market data)">Funding rate/h</th><th>Updated</th></tr></thead><tbody>` +
       rows.map(({ p, s, mid, notl, liq, dist }) => { const up = n(p.unrealizedPnl), ent = n(p.averageEntryPrice), pc = ent ? (s > 0 ? 1 : -1) * (mid - ent) / ent * 100 : 0, t = tk[p.instrumentId], fu = p.fundingSinceOpen == null || p.fundingSinceOpen === '' ? null : -n(p.fundingSinceOpen);
-        return `<tr><td>${esc(p.marketDisplayName)}</td><td><span class="tag ${s > 0 ? 'ok' : 'bad'}">${s > 0 ? '▲ LONG' : '▼ SHORT'}</span></td><td class="num">${fmt(Math.abs(s), 4)}</td><td class="num">${money(notl)}</td><td class="num">${pxf(ent)}</td><td class="num">${pxf(mid)}</td><td class="num ${cls(up)}">${smoney(up, 2)}</td><td class="num ${cls(pc)}">${sgn(pc, 2)}%</td><td class="num ${cls(n(p.roe))}">${p.roe == null ? '—' : sgn(n(p.roe), 2) + '%'}</td><td class="num">${esc(p.leverage)}× ${p.marginMode === 'ISOLATED' ? 'iso' : 'cross'}</td><td class="num">${p.maxLeverage ? esc(p.maxLeverage) + '×' : '—'}</td><td class="num">${money(n(p.marginUsed))}</td><td class="num">${liq ? pxf(liq) : '—'}</td><td class="num">${dist == null ? '—' : fmt(dist, 1) + '%'}</td><td class="num">${p.adl == null ? '—' : esc(p.adl)}</td><td class="num ${cls(n(p.closedPnl))}">${p.closedPnl == null ? '—' : smoney(n(p.closedPnl), 2)}</td><td class="num">${p.cumFee == null ? '—' : money(n(p.cumFee), 2)}</td><td class="num ${cls(fu)}">${fu == null ? '—' : smoney(fu, 2)}</td><td class="num ${t ? cls(-n(t.fundingRate) * (s > 0 ? 1 : -1)) : ''}">${t ? sgn(n(t.fundingRate) * 100, 4) + '%' : '…'}</td><td class="num">${p.updatedAt ? dt(p.updatedAt) : '—'}</td></tr>`; }).join('') + `</tbody></table></div>
+        return `<tr><td>${esc(p.marketDisplayName)}</td><td><span class="tag ${s > 0 ? 'ok' : 'bad'}">${s > 0 ? '▲ LONG' : '▼ SHORT'}</span></td><td class="num">${fmt(Math.abs(s), 4)}</td><td class="num">${money(notl)}</td><td class="num">${pxf(ent)}</td><td class="num">${pxf(mid)}</td><td class="num ${cls(up)}">${smoney(up, 2)}</td><td class="num ${cls(pc)}">${sgn(pc, 2)}%</td><td class="num ${cls(n(p.roe))}">${p.roe == null ? '—' : sgn(n(p.roe), 2) + '%'}</td><td class="num">${esc(p.leverage)}× ${p.marginMode === 'ISOLATED' ? 'iso' : 'cross'}</td><td class="num">${p.maxLeverage ? esc(p.maxLeverage) + '×' : '—'}</td><td class="num">${money(n(p.marginUsed))}</td><td class="num">${liq ? pxf(liq) : '—'}</td><td class="num">${dist == null ? '—' : fmt(dist, 1) + '%'}</td><td class="num">${tpslCell(p, 'tp', mid)}</td><td class="num">${tpslCell(p, 'sl', mid)}</td><td class="num">${p.adl == null ? '—' : esc(p.adl)}</td><td class="num ${cls(n(p.closedPnl))}">${p.closedPnl == null ? '—' : smoney(n(p.closedPnl), 2)}</td><td class="num">${p.cumFee == null ? '—' : money(n(p.cumFee), 2)}</td><td class="num ${cls(fu)}">${fu == null ? '—' : smoney(fu, 2)}</td><td class="num ${t ? cls(-n(t.fundingRate) * (s > 0 ? 1 : -1)) : ''}">${t ? sgn(n(t.fundingRate) * 100, 4) + '%' : '…'}</td><td class="num">${p.updatedAt ? dt(p.updatedAt) : '—'}</td></tr>`; }).join('') + `</tbody></table></div>
       <p class="note">Liquidation prices, ROE, ADL and cumulative figures are the ones reported by the exchange. “Funding since open” uses the exchange's cumFunding with the sign flipped (positive = received); the funding-rate colour shows whether the rate pays or costs this side. Leverage is the setting of each position.</p>`;
   } },
   { id: 'activity', title: 'Trading style', sub: fsub, w: 4, render(S) {
@@ -425,10 +434,10 @@ const CARDS = [
     return `<div class="scroll"><table><thead><tr>${th('k', 'Market')}${th('fills', 'Fills')}${th('vol', 'Volume $')}${th('mk', 'Maker %')}${th('pnl', 'Closed PnL')}${th('fees', 'Fees')}${th('net', 'Net')}${th('win', 'Win %')}</tr></thead><tbody>` +
       rows.map(r => `<tr><td>${esc(r.k)}</td><td class="num">${r.fills}</td><td class="num">${fmt(r.vol, 0)}</td><td class="num">${fmt(r.mvol / (r.vol || 1) * 100, 0)}</td><td class="num ${cls(r.pnl)}">${smoney(r.pnl, 2)}</td><td class="num">${fmt(r.fees, 2)}</td><td class="num ${cls(r.net)}">${smoney(r.net, 2)}</td><td class="num">${r.win == null ? '—' : fmt(r.win, 0)}</td></tr>`).join('') + `</tbody></table></div>`;
   } },
-  { id: 'orderflow', title: 'Order flow', sub: S => S.orders ? `${fmt(S.orders.length, 0)} orders · ${getPeriod(S) ? getPeriod(S).label : 'latest page'}` : '', w: 4, render(S) {
+  { id: 'orderflow', title: 'Order flow', sub: S => S.orders ? `${fmt(S.orders.length, 0)} orders · ${getPeriod(S) ? getPeriod(S).label : 'recent'}` : '', w: 4, render(S) {
     const o = S.orders; if (!o) return '<div class="empty">Loading orders…</div>'; if (!o.length) return '<div class="empty">No orders</div>';
     const st = {}, tif = {}, life = []; let plac = 0, filled = 0, buy = 0;
-    for (const x of o) { st[x.status] = (st[x.status] || 0) + 1; tif[x.timeInForce] = (tif[x.timeInForce] || 0) + 1; const px = n(x.price); plac += n(x.originalSize) * px; filled += n(x.filledSize) * (n(x.avgFillPrice) || px); if (x.status === 'CANCELED') life.push((x.updatedAt - x.createdAt) / 1e6); if (x.side === 'BUY') buy++; }
+    for (const x of o) { st[x.status] = (st[x.status] || 0) + 1; tif[x.timeInForce] = (tif[x.timeInForce] || 0) + 1; const px = n(x.price); plac += n(x.originalSize) * px; filled += n(x.filledSize) * (n(x.avgFillPrice) || px); if (/CANCEL/.test(x.status)) life.push((x.updatedAt - x.createdAt) / 1e6); if (x.side === 'BUY') buy++; }
     life.sort((a, b) => a - b); const med = life.length ? life[life.length >> 1] : null, pc = (k, m) => fmt(k / m * 100, 0) + '%';
     return `<div class="rows">` + Object.entries(st).sort((a, b) => b[1] - a[1]).map(([k, v]) => row(esc(k.toLowerCase().replace(/_/g, ' ')), `${fmt(v, 0)} · ${pc(v, o.length)}`)).join('') +
       row('Filled / placed (by size)', plac ? fmt(filled / plac * 100, 1) + '%' : '—') + row('Avg. order size', '$' + fmt(plac / o.length, 0)) +
@@ -436,7 +445,7 @@ const CARDS = [
       row('Time in force', Object.entries(tif).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${pc(v, o.length)}`).join(' · ')) +
       row('Order types', Object.entries(o.reduce((m, x) => (m[x.orderType || '—'] = (m[x.orderType || '—'] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${pc(v, o.length)}`).join(' · ')) +
       row('Reduce-only orders', pc(o.filter(x => x.reduceOnly).length, o.length)) + row('Realized PnL of these orders', `<span class="${cls(o.reduce((a, x) => a + n(x.pnl), 0))}">${smoney(o.reduce((a, x) => a + n(x.pnl), 0), 2)}</span>`, 'sum of the pnl field the exchange reports on these orders') +
-      row('Buys / sells', `${pc(buy, o.length)} / ${pc(o.length - buy, o.length)}`) + `</div>` + (o.length >= 300 ? '<p class="note">The API returns up to 300 orders per request, so this is a sample of the latest orders in the selected period.</p>' : '');
+      row('Buys / sells', `${pc(buy, o.length)} / ${pc(o.length - buy, o.length)}`) + `</div>` + (o.length >= 3000 ? '<p class="note">Only the orders loaded so far are analyzed (the latest 3,000 at most).</p>' : '');
   } },
   { id: 'feetier', title: 'Fee tier progress', sub: '14-day volume', w: 4, render(S) {
     const t = feeInfo(S); if (!t) return '<div class="empty">No data</div>';
@@ -473,8 +482,9 @@ const CARDS = [
       t.slice(0, 100).map(x => `<tr><td class="num">${dtl(x.createdAt)}</td><td><span class="tag ${x.sign > 0 ? 'ok' : x.sign < 0 ? 'bad' : ''}">${label(x)}</span></td><td class="num ${x.sign < 0 ? 'neg' : x.sign > 0 ? 'pos' : ''}">${x.sign < 0 ? '−' : x.sign > 0 ? '+' : ''}${money(x.amount)}</td><td>${esc(x.chain || '—')}</td><td>${x.status === 'APPLIED' ? 'done' : 'pending'}</td></tr>`).join('') + `</tbody></table></div>` +
       `<p class="note">${t.length > 100 ? 'Showing the latest 100 of ' + t.length + '. ' : ''}Net = deposits − withdrawals ± transfers between addresses. Movements that do not touch the perps account (spot, vault events) are listed with their API name and not counted.${bn ? ` This address received the new-user bonus (${esc(bn.amount)} ${esc(bn.type)}); TxFlow pays such bonuses out as small incoming transfers.` : ''}</p>`;
   } },
-  { id: 'orders', title: 'Open orders', sub: 'now', w: 6, render(S) {
-    const o = S.openOrders || []; if (!o.length) return '<div class="empty">No open orders</div>';
+  { id: 'orders', title: 'Open orders', sub: 'incl. TP/SL · now', w: 6, render(S) {
+    const tps = ((S.cond && S.cond.tpsl) || []).flatMap(t => [['tp', 'Take profit'], ['sl', 'Stop loss']].filter(([k]) => n(t[k + 'TriggerPrice'])).map(([k, lab]) => ({ marketDisplayName: coinName(t.coin), side: t.side === 'B' ? 'BUY' : 'SELL', orderType: lab + ' ' + String(t[k + 'OrderType'] || 'market').toLowerCase(), price: n(t[k + 'OrderPrice']), triggerPx: t[k + 'TriggerPrice'], triggerCondition: '', remainingSize: t.quantity, origSize: t.quantity, all: !n(t.quantity), timeInForce: '—', leverage: t.leverage, marginMode: t.marginMode, reduceOnly: true, isTpsl: true, isTrigger: true, createdAt: t.createTime * US })));
+    const o = (S.openOrders || []).concat(tps); if (!o.length) return '<div class="empty">No open orders</div>';
     const by = {}; o.forEach(x => by[x.marketDisplayName] = (by[x.marketDisplayName] || 0) + 1);
     return `<div class="rows">` + row('Total', fmt(o.length, 0)) + row('Markets', Object.keys(by).length) + row('Buys / sells', `${o.filter(x => x.side === 'BUY').length} / ${o.filter(x => x.side === 'SELL').length}`) +
       row('Resting buy notional', money(o.filter(x => x.side === 'BUY').reduce((a, x) => a + n(x.price) * n(x.remainingSize), 0), 0)) + row('Resting sell notional', money(o.filter(x => x.side === 'SELL').reduce((a, x) => a + n(x.price) * n(x.remainingSize), 0), 0)) +
@@ -482,13 +492,13 @@ const CARDS = [
         return row('Order types', cnt(x => x.orderType || '—')) + row('Time in force', cnt(x => x.timeInForce || '—')) + row('Reduce-only / TP-SL / trigger', `${fmt(o.filter(x => x.reduceOnly).length, 0)} / ${fmt(o.filter(x => x.isTpsl).length, 0)} / ${fmt(o.filter(x => x.isTrigger).length, 0)}`) +
           row('Partially filled', fmt(o.filter(x => n(x.origSize) > n(x.remainingSize) + 1e-12).length, 0)) + row('Oldest order', dt(Math.min(...o.map(x => x.createdAt)))); })() + `</div>` +
       `<div class="scroll" style="margin-top:8px;max-height:260px"><table><thead><tr><th>Market</th><th>Side</th><th>Type</th><th>Price</th><th>Trigger</th><th>Remaining</th><th>Size</th><th>TIF</th><th>Lev.</th><th>Flags</th><th>Created</th></tr></thead><tbody>` +
-      o.slice(0, 100).map(x => `<tr><td>${esc(x.marketDisplayName)}</td><td><span class="${x.side === 'BUY' ? 'pos' : 'neg'}">${x.side === 'BUY' ? '▲ BUY' : '▼ SELL'}</span></td><td>${esc(x.orderType || '—')}</td><td class="num">${pxf(n(x.price))}</td><td class="num">${n(x.triggerPx) ? esc(x.triggerCondition || '') + ' ' + pxf(n(x.triggerPx)) : '—'}</td><td class="num">${fmt(n(x.remainingSize), 4)}</td><td class="num">${fmt(n(x.origSize), 4)}</td><td>${esc(x.timeInForce)}</td><td class="num">${x.leverage ? esc(x.leverage) + '× ' + (/iso/i.test(x.marginMode) ? 'iso' : 'x') : '—'}</td><td>${[x.reduceOnly && 'reduce', x.isTpsl && 'tp/sl', x.isTrigger && 'trigger'].filter(Boolean).join(' ') || '—'}</td><td class="num">${dt(x.createdAt)}</td></tr>`).join('') + `</tbody></table></div>${o.length > 100 ? `<p class="note">Showing the first 100 of ${fmt(o.length, 0)} open orders.</p>` : ''}`;
+      o.slice(0, SHOWN.orders).map(x => `<tr><td>${esc(x.marketDisplayName)}</td><td><span class="${x.side === 'BUY' ? 'pos' : 'neg'}">${x.side === 'BUY' ? '▲ BUY' : '▼ SELL'}</span></td><td>${esc(x.orderType || '—')}</td><td class="num">${n(x.price) ? pxf(n(x.price)) : '<span class="muted">market</span>'}</td><td class="num">${n(x.triggerPx) ? esc(x.triggerCondition || '') + ' ' + pxf(n(x.triggerPx)) : '—'}</td><td class="num">${x.all ? 'all' : fmt(n(x.remainingSize), 4)}</td><td class="num">${x.all ? 'all' : fmt(n(x.origSize), 4)}</td><td>${esc(x.timeInForce)}</td><td class="num">${x.leverage ? esc(x.leverage) + '× ' + (/iso/i.test(x.marginMode) ? 'iso' : 'x') : '—'}</td><td>${[x.reduceOnly && 'reduce', x.isTpsl && 'tp/sl', x.isTrigger && 'trigger'].filter(Boolean).join(' ') || '—'}</td><td class="num">${dt(x.createdAt)}</td></tr>`).join('') + `</tbody></table></div>${moreNote('orders', o.length, 'open orders')}`;
   } },
   { id: 'fills', title: 'Recent fills', sub: fsub, w: 6, render(S) {
     if (!S.fills.length) return '<div class="empty">No fills</div>';
     return `<div class="scroll"><table><thead><tr><th>Time</th><th>Market</th><th>Side</th><th title="Opens/adds to a position, or reduces/closes it (from the position size before the fill)">Action</th><th>Price</th><th>Size</th><th>$</th><th>Role</th><th>Lev.</th><th>Fee</th><th>Closed PnL</th><th>Net</th></tr></thead><tbody>` +
-      S.fills.slice(0, 100).map(f => { const sz = n(f.size), v = sz * n(f.price), p = n(f.closedPnl) - n(f.fee), sg = f.side === 'BUY' ? 1 : -1, sp = f.startPos || 0, act = !sp || Math.sign(sp) === sg ? (sp ? 'add' : 'open') : (sz > Math.abs(sp) + 1e-12 ? 'flip' : Math.abs(Math.abs(sp) - sz) < 1e-9 ? 'close' : 'reduce');
-        return `<tr><td class="num">${dt(f.createdAt)}</td><td>${esc(f.marketDisplayName)}</td><td><span class="${f.side === 'BUY' ? 'pos' : 'neg'}">${f.side === 'BUY' ? '▲ BUY' : '▼ SELL'}</span></td><td>${act}${f.twap ? ' · twap' : ''}</td><td class="num">${pxf(n(f.price))}</td><td class="num">${fmt(sz, 4)}</td><td class="num">${fmt(v, 1)}</td><td><span class="tag ${f.role === 'MAKER' ? 'ok' : 'warn'}">${f.role.toLowerCase()}</span></td><td class="num">${f.lev ? esc(f.lev) + '× ' + (/iso/i.test(f.mmode) ? 'iso' : 'x') : '—'}</td><td class="num">${fmt(n(f.fee), 4)}</td><td class="num ${cls(n(f.closedPnl))}">${n(f.closedPnl) ? smoney(n(f.closedPnl), 3) : '—'}</td><td class="num ${cls(p)}">${n(f.closedPnl) || n(f.fee) ? smoney(p, 3) : '—'}</td></tr>`; }).join('') + `</tbody></table></div><p class="note">Latest 100 of ${fmt(S.fills.length, 0)} loaded fills.</p>`;
+      S.fills.slice(0, SHOWN.fills).map(f => { const sz = n(f.size), v = sz * n(f.price), p = n(f.closedPnl) - n(f.fee), sg = f.side === 'BUY' ? 1 : -1, sp = f.startPos || 0, act = !sp || Math.sign(sp) === sg ? (sp ? 'add' : 'open') : (sz > Math.abs(sp) + 1e-12 ? 'flip' : Math.abs(Math.abs(sp) - sz) < 1e-9 ? 'close' : 'reduce');
+        return `<tr><td class="num">${dt(f.createdAt)}</td><td>${esc(f.marketDisplayName)}</td><td><span class="${f.side === 'BUY' ? 'pos' : 'neg'}">${f.side === 'BUY' ? '▲ BUY' : '▼ SELL'}</span></td><td>${act}${f.twap ? ' · twap' : ''}</td><td class="num">${pxf(n(f.price))}</td><td class="num">${fmt(sz, 4)}</td><td class="num">${fmt(v, 1)}</td><td><span class="tag ${f.role === 'MAKER' ? 'ok' : 'warn'}">${f.role.toLowerCase()}</span></td><td class="num">${f.lev ? esc(f.lev) + '× ' + (/iso/i.test(f.mmode) ? 'iso' : 'x') : '—'}</td><td class="num">${fmt(n(f.fee), 4)}</td><td class="num ${cls(n(f.closedPnl))}">${n(f.closedPnl) ? smoney(n(f.closedPnl), 3) : '—'}</td><td class="num ${cls(p)}">${n(f.closedPnl) || n(f.fee) ? smoney(p, 3) : '—'}</td></tr>`; }).join('') + `</tbody></table></div>${moreNote('fills', S.fills.length, 'loaded fills')}`;
   } },
   { id: 'volday', title: 'Daily volume', sub: 'last 14 days · UTC', w: 6, render() { return '<div class="chartbox" data-ch="volday"></div>'; },
     after(el, S) { const f = S.fee, b = $('[data-ch=volday]', el); if (!f || !Array.isArray(f.dailyUserVlm)) { b.innerHTML = '<div class="empty">No data</div>'; return; }
@@ -505,19 +515,13 @@ const CARDS = [
       `<div class="rows" style="margin-top:10px"><div class="row"><span><b>Volume by leverage</b></span><span></span></div></div>` + bars(Object.fromEntries(Object.entries(L.lev).map(([k, v]) => [k + '×', v]))) +
       `<div class="rows" style="margin-top:10px"><div class="row"><span><b>Volume by margin mode</b></span><span></span></div></div>` + bars(L.modes);
   } },
-  { id: 'trades', title: 'Best & worst closed orders', sub: S => S.orders ? `${fmt(S.orders.length, 0)} orders · ${getPeriod(S) ? getPeriod(S).label : 'latest page'}` : '', w: 6, render(S) {
+  { id: 'trades', title: 'Best & worst closed orders', sub: S => S.orders ? `${fmt(S.orders.length, 0)} orders · ${getPeriod(S) ? getPeriod(S).label : 'recent'}` : '', w: 6, render(S) {
     const o = S.orders; if (!o) return '<div class="empty">Loading orders…</div>';
     const c = o.filter(x => n(x.pnl) !== 0); if (!c.length) return '<div class="empty">No closed orders with PnL</div>';
     const srt = c.slice().sort((a, b) => n(b.pnl) - n(a.pnl)), tbl = (title, a) => `<div class="rows" style="margin-top:8px"><div class="row"><span><b>${title}</b></span><span></span></div></div><div class="scroll" style="max-height:230px"><table><thead><tr><th>Time</th><th>Market</th><th>Order</th><th>Entry</th><th>Exit</th><th>Size $</th><th>PnL</th><th>ROE %</th></tr></thead><tbody>` +
       a.map(x => `<tr><td class="num">${dt(x.createdAt)}</td><td>${esc(x.marketDisplayName)}</td><td>${esc(x.dir || x.side)} ${esc((x.orderType || '').toLowerCase())}</td><td class="num">${pxf(n(x.entryPrice))}</td><td class="num">${pxf(n(x.avgFillPrice))}</td><td class="num">${fmt(n(x.filledSize) * (n(x.avgFillPrice) || n(x.price)), 0)}</td><td class="num ${cls(n(x.pnl))}">${smoney(n(x.pnl), 2)}</td><td class="num ${cls(n(x.roe))}">${sgn(n(x.roe), 2)}%</td></tr>`).join('') + `</tbody></table></div>`;
-    return tbl('Best 8', srt.slice(0, 8)) + tbl('Worst 8', srt.slice(-8).reverse()) + `<p class="note">From the orders returned by the API (latest ${fmt(o.length, 0)}); PnL and ROE are the exchange's per-order values.</p>`;
-  } },
-  { id: 'tickers', title: 'Markets now', sub: 'positions, open orders, most traded', w: 12, render(S) {
-    const tk = S.tickers || {}, ids = (S.tkIds || []).filter(id => tk[id]); if (!ids.length) return S.tkIds && S.tkIds.length === 0 ? '<div class="empty">No markets</div>' : '<div class="empty">Loading market data…</div>';
-    const pos = new Set(Object.values(S.account.positions).map(p => String(p.instrumentId)));
-    return `<div class="scroll"><table><thead><tr><th>Market</th><th>Last</th><th>Mark</th><th>Oracle</th><th title="Mark price vs oracle price">Mark − oracle</th><th>Open interest $</th><th title="Funding rate per hour: longs pay shorts when positive">Funding/h</th><th title="Hourly rate × 24 × 365">Annualized</th><th>Next funding</th><th>24h volume</th><th>24h change</th></tr></thead><tbody>` +
-      ids.map(id => { const t = tk[id], mk = n(t.markPx), fr = n(t.fundingRate), nf = t.nextFundingTime ? (t.nextFundingTime - Date.now()) / 1000 : null;
-        return `<tr${pos.has(id) ? ' style="background:var(--surface-2)"' : ''}><td>${esc(t.coin)}${pos.has(id) ? ' ●' : ''}</td><td class="num">${pxf(n(t.lastPrice))}</td><td class="num">${pxf(mk)}</td><td class="num">${pxf(n(t.oraclePx))}</td><td class="num">${n(t.oraclePx) ? sgn((mk / n(t.oraclePx) - 1) * 100, 3) + '%' : '—'}</td><td class="num">$${big(n(t.openInterest) * mk)}</td><td class="num ${cls(-fr)}">${sgn(fr * 100, 4)}%</td><td class="num">${sgn(fr * 24 * 365 * 100, 1)}%</td><td class="num">${nf == null ? '—' : nf > 0 ? 'in ' + dur(nf) : 'now'}</td><td class="num">$${big(n(t.dayNtlVlm))}</td><td class="num ${cls(n(t.change24hPct))}">${sgn(n(t.change24hPct), 2)}%</td></tr>`; }).join('') + `</tbody></table></div><p class="note">● = open position. Live exchange data per market (not the wallet's), refreshed with the page.</p>`;
+    const wins = srt.filter(x => n(x.pnl) > 0), losses = srt.filter(x => n(x.pnl) < 0).reverse();
+    return (wins.length ? tbl('Best ' + Math.min(8, wins.length), wins.slice(0, 8)) : '<div class="empty">No profitable orders</div>') + (losses.length ? tbl('Worst ' + Math.min(8, losses.length) + ' (losing orders)', losses.slice(0, 8)) : '<div class="empty">No losing orders in the loaded history</div>') + `<p class="note">From the orders returned by the API (latest ${fmt(o.length, 0)}); PnL and ROE are the exchange's per-order values.</p>`;
   } },
   { id: 'spot', title: 'Spot', w: 6, render(S) {
     const sp = S.spot, bal = sp && sp.balances || []; if (!sp) return '<div class="empty">Loading…</div>';
@@ -549,8 +553,13 @@ const CARDS = [
     let h = '<div class="rows">';
     if (P) h += row('Points season', 'Season 1 · week ' + (weeksList().slice(-1)[0] || { n: 1 }).n) + row('Week ends', P.currentEpochEndsAt ? `${ts(P.currentEpochEndsAt)} · ${left(P.currentEpochEndsAt)}` : '—', 'the points snapshot is taken when the epoch (week) ends') +
       row('Points updated', P.lastUpdateAt ? dtlU(P.lastUpdateAt * US) + ' GMT' : '—', 'time of the last points distribution (credited on the Tuesday after an epoch ends)') +
-      row('Last epoch / all-time points', `${fmt(n(P.latestEpochPoints), 0)} / ${fmt(n(P.totalPoints), 0)}`, 'the public API returns 0 for every address; the real figures need the owner to be signed in on app.txflow.com/points') + row('Last epoch / all-time rank', `${P.latestEpochRank ? '#' + esc(P.latestEpochRank) : '—'} / ${P.overallRank ? '#' + esc(P.overallRank) : '—'}`) + (P.isRisk ? row('Risk flag', 'set') : '');
+      row('Your points and ranks', '<span class="muted">not provided by the API</span>', 'TxFlow returns real points, history and ranks only to the signed-in owner (the public overview shows 0 for every address)') + (P.isRisk ? row('Risk flag', 'set') : '');
     h += '</div>';
+    { const done = P && P.lastUpdateAt ? Math.max(0, Math.floor((P.lastUpdateAt - EPOCH1) / WEEK)) : 0, trader = done * 1250000, ref = done * 152000;   // epochs finished before the last distribution
+      h += `<div class="rows" style="margin-top:12px"><div class="row"><span><b>Points distributed so far</b> <span class="tag warn">from the docs, not from the API</span></span><span>${done ? '≈ ' + fmt(trader, 0) + ' – ' + fmt(trader + ref, 0) : '—'}</span></div>` +
+        row('Weekly drops made', fmt(done, 0), 'first drop on Tuesday 20 Oct 2026, then every Tuesday after an epoch ends (TxFlow docs); the last one is taken from the API update time') +
+        row('Pool per week (docs)', `trader ${fmt(1250000, 0)} · referral up to ${fmt(152000, 0)}`, 'Trader pool 1,250,000 points per week (82%), referral pool up to 152,000 per week (10%); Growth Reserve 488,000 per month (8%) is not counted here') + `</div>`; }
+    h += `<p class="note"><b>TxFlow's API does not provide points yet.</b> Your points, their history and ranks (and the total number of points distributed) are not available through the public API — the points page of TxFlow shows them only to the signed-in owner. Check them on app.txflow.com/points.</p>`;
     if (U && U.activityInfo) { const a = U.activityInfo, d = U.userActivityData || {}, vol = n(d.userVolume), cfg = a.tradeConfig || [], next = cfg.find(x => vol < x.tradeVolume);
       h += `<div class="rows" style="margin-top:12px"><div class="row"><span><b>Trade Unlock</b> · ${ts(a.startTime)} → ${ts(a.endTime)}</span><span>${left(a.endTime)}</span></div>` + row('Your volume', '$' + big(vol)) + row('Platform volume', '$' + big(n(d.platformVolume))) + row('Your share', fmt(n(d.ratio) * 100, 4) + '%') +
         row('Estimated fee credits', fmt(n(d.evaluateFc), 2)) + row('Next level', next ? `${esc(next.name)} · $${big(next.tradeVolume)} (${fmt(Math.max(0, next.tradeVolume - vol) / 1e6, 1)}M to go)` : 'all levels reached') + row('Registered', U.userStatus ? 'yes' : (U.canRegister ? 'no (open)' : 'no')) + `</div>` +
@@ -581,17 +590,70 @@ const CARDS = [
     const P = c.pts, pl = c.plb || [];
     h += `<div class="rows" style="margin-top:12px"><div class="row"><span><b>Points (Season 1)</b></span><span></span></div>` + (P ? row('Current epoch', esc(P.currentEpochId || '—') + ' · Season 1') + row('Epoch ends', P.currentEpochEndsAt ? `${ts(P.currentEpochEndsAt)} · ${(P.currentEpochEndsAt - Date.now()) > 0 ? 'in ' + dur((P.currentEpochEndsAt - Date.now()) / 1000) : 'ended'}` : '—') +
       row('Points updated', P.lastUpdateAt ? dtlU(P.lastUpdateAt * US) + ' GMT' : '—', 'time of the last points distribution (credited on the Tuesday after an epoch ends)') +
-      row('Last epoch / all-time points', `${fmt(n(P.latestEpochPoints), 0)} / ${fmt(n(P.totalPoints), 0)}`, 'the public API returns 0 for every address; the real figures need the owner to be signed in on app.txflow.com/points') + row('Last epoch / all-time rank', `${P.latestEpochRank ? '#' + esc(P.latestEpochRank) : '—'} / ${P.overallRank ? '#' + esc(P.overallRank) : '—'}`) : '') +
+      row('Your points and ranks', '<span class="muted">not provided by the API</span>', 'TxFlow returns real points, history and ranks only to the signed-in owner (the public overview shows 0 for every address)') : '') +
       row('Points leaderboard', pl.length ? fmt(pl.length, 0) + ' rows' : 'empty — the API publishes no points ranking') + `</div><p class="note">Personal points, their history and ranks are available only to the signed-in owner (the API answers “unauthorized”), and the public overview returns zeros for every address, so the dashboard cannot show real points. Type your points into the stats image form instead.</p>`;
     if (pl.length) { const ks = Object.keys(pl[0]).slice(0, 6); h += `<div class="scroll" style="max-height:300px"><table><thead><tr>${ks.map(k => `<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${pl.slice(0, 100).map(r => `<tr${String(r.address || r.userAddress || '').toLowerCase() === mask ? ' style="background:var(--surface-2);font-weight:700"' : ''}>${ks.map(k => `<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
     return h;
+  } },
+  { id: 'equity', title: 'Equity history', sub: S => 'daily · ' + (getPeriod(S) ? getPeriod(S).label : 'all time'), w: 6, render() { return '<div class="chartbox" data-ch="equity"></div>'; },
+    after(el, S) { const b = $('[data-ch=equity]', el); if (!S.hist) { b.innerHTML = '<div class="empty">Loading…</div>'; return; }
+      lineChart(b, histSeries(S, 'eq'), { color: css('--s1'), area: true, minRange: 1, axis: v => money(v, 0), tip: v => money(v, 2), xfmt: dshort, tfmt: dshort }); } },
+  { id: 'pnlchart', title: 'PnL history', sub: S => 'cumulative, daily · ' + (getPeriod(S) ? getPeriod(S).label : 'all time'), w: 6, render() { return '<div class="chartbox" data-ch="pnlh"></div>'; },
+    after(el, S) { const b = $('[data-ch=pnlh]', el); if (!S.hist) { b.innerHTML = '<div class="empty">Loading…</div>'; return; }
+      lineChart(b, histSeries(S, 'pnl'), { color: css('--s2'), zero: true, minRange: 1, axis: v => smoney(v, 0), tip: v => smoney(v, 2), xfmt: dshort, tfmt: dshort }); } },
+  { id: 'perf', title: 'Performance (exchange stats)', sub: 'computed by TxFlow', w: 6, render(S) {
+    const H = S.hist; if (!H) return '<div class="empty">Loading…</div>';
+    const names = { '24H': 'Last 24 hours', '7D': 'Last 7 days', '30D': 'Last 30 days', '90D': 'Last 90 days', 'ALLTIME': 'All time' };
+    let h = `<div class="scroll"><table><thead><tr><th>Window</th><th>PnL</th><th title="Return on equity over the window, in percent">ROE</th><th>Volume</th><th title="Largest peak-to-trough drop of equity in the window">Max drawdown</th></tr></thead><tbody>` +
+      Object.entries(names).map(([k, t]) => { const o = H.ov[k]; return o ? `<tr><td>${t}</td><td class="num ${cls(n(o.pnl))}">${smoney(n(o.pnl), 2)}</td><td class="num ${cls(n(o.roe))}">${sgn(n(o.roe), 2)}%</td><td class="num">$${big(n(o.volume))}</td><td class="num">${fmt(n(o.maxDrawdown), 2)}%</td></tr>` : `<tr><td>${t}</td><td colspan="4" class="muted">no data</td></tr>`; }).join('') + `</tbody></table></div>`;
+    const apr = (d, t) => { const a = H.apr[d]; return a ? row(t, `<span class="${cls(n(a.combinedApr))}">${sgn(n(a.combinedApr), 1)}%</span> · profit ${smoney(n(a.totalProfit), 2)} on avg ${money(n(a.totalAvgCapital), 0)}`, 'annualized return on the average capital of the account over the window, deposits and withdrawals taken into account') : ''; };
+    h += `<div class="rows" style="margin-top:8px">` + apr(7, 'APR, last 7 days') + apr(30, 'APR, last 30 days') +
+      (H.apr[30] ? row('Deposits / withdrawals (30d)', `${money(n(H.apr[30].totalDeposit), 0)} / ${money(n(H.apr[30].totalWithdrawal), 0)}`) : '') +
+      (H.top ? row('Realized PnL (all time)', `<span class="${cls(n(H.top.totalRealizedPnl))}">${smoney(n(H.top.totalRealizedPnl), 2)}</span>`, 'realized PnL reported by the exchange since the first activity') + row('Total PnL (all time)', `<span class="${cls(n(H.top.totalPnl))}">${smoney(n(H.top.totalPnl), 2)}</span>`, 'realized + unrealized, without deposits and withdrawals') : '') + `</div>`;
+    return h + `<p class="note">Figures come straight from the TxFlow stats endpoints (userOverview, multiUserApr, multiUserPnl).</p>`;
+  } },
+  { id: 'dailytable', title: 'Daily account history', sub: S => getPeriod(S) ? getPeriod(S).label : 'all time', w: 12, render(S) {
+    const H = S.hist; if (!H) return '<div class="empty">Loading…</div>'; const pr = getPeriod(S);
+    const rows = H.pnl.filter(r => n(r.totalCurrEquity) || n(r.totalPrevEquity) || n(r.totalDayNetFlow)).filter(r => !pr || (Date.parse(r.pnlDate + 'T00:00:00Z') + 864e5 > pr.from / US && Date.parse(r.pnlDate + 'T00:00:00Z') <= pr.to / US)).slice().reverse();
+    if (!rows.length) return '<div class="empty">No history for this period</div>';
+    return `<div class="scroll" style="max-height:340px"><table><thead><tr><th>Date (UTC)</th><th>Equity</th><th title="Equity change over the day, including deposits and withdrawals">Change</th><th>Deposits</th><th>Withdrawals</th><th>Transfers in/out</th><th title="PnL of the day = change of equity minus net flow">Day PnL</th><th title="Cumulative PnL since the first activity">Cumulative PnL</th><th title="Cumulative realized PnL">Cumulative realized</th></tr></thead><tbody>` +
+      rows.map((r, i) => { const dp = n(r.totalEquityChange) - n(r.totalDayNetFlow); return `<tr><td class="num">${esc(r.pnlDate)}</td><td class="num">${money(n(r.totalCurrEquity), 2)}</td><td class="num ${cls(n(r.totalEquityChange))}">${smoney(n(r.totalEquityChange), 2)}</td><td class="num">${n(r.totalDayDeposit) ? money(n(r.totalDayDeposit), 2) : '—'}</td><td class="num">${n(r.totalDayWithdrawal) ? money(n(r.totalDayWithdrawal), 2) : '—'}</td><td class="num">${n(r.totalDayTransferIn) || n(r.totalDayTransferOut) ? money(n(r.totalDayTransferIn), 2) + ' / ' + money(n(r.totalDayTransferOut), 2) : '—'}</td><td class="num ${cls(dp)}">${smoney(dp, 2)}</td><td class="num ${cls(n(r.totalPnl))}">${smoney(n(r.totalPnl), 2)}</td><td class="num ${cls(n(r.totalRealizedPnl))}">${smoney(n(r.totalRealizedPnl), 2)}</td></tr>`; }).join('') + `</tbody></table></div>`;
+  } },
+  { id: 'rewards', title: 'Rewards hub', sub: 'TxFlow campaigns', w: 6, render(S) {
+    const R = S.rewards; if (R === undefined) return '<div class="empty">Loading…</div>'; if (!R) return '<div class="empty">No data</div>';
+    const ts = ms => ms && ms < 4e12 ? dtlU(ms * US) : 'no end date', sec = (title, a) => !(a && a.length) ? '' : `<div class="rows" style="margin-top:8px"><div class="row"><span><b>${title}</b></span><span>${a.length}</span></div>` +
+      a.map(x => row(`${esc(x.title)} <span class="tag ${/ongoing|live|active/i.test(x.status) ? 'ok' : ''}">${esc(String(x.status || '').toLowerCase())}</span>${x.targetUrl ? ` <a href="${esc(x.targetUrl)}" target="_blank" rel="noopener">open ↗</a>` : ''}<br><span class="muted">${esc(x.subTitle || '')}</span>`, `${x.startTime ? dtlU(x.startTime * US) : ''} → ${ts(x.endTime)}`)).join('') + `</div>`;
+    return (sec('Featured', R.featured) + sec('Activities', R.activities) + sec('History', R.history)) || '<div class="empty">No campaigns</div>';
+  } },
+  { id: 'orderhist', title: 'Order history', sub: S => S.orders ? `${fmt(S.orders.length, 0)} orders · ${getPeriod(S) ? getPeriod(S).label : 'recent'}` : '', w: 12, render(S) {
+    const o = S.orders; if (!o) return '<div class="empty">Loading orders…</div>'; if (!o.length) return '<div class="empty">No orders</div>';
+    const st = {}; o.forEach(x => st[x.status] = (st[x.status] || 0) + 1);
+    return `<div class="rows">` + row('Orders loaded', fmt(o.length, 0) + (S.ordersDone ? '' : ' · loading…')) + row('By status', Object.entries(st).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k.toLowerCase().replace(/_/g, ' '))} ${fmt(v, 0)}`).join(' · ')) + `</div>` +
+      `<div class="scroll" style="max-height:420px;margin-top:8px"><table><thead><tr><th>Time</th><th>Market</th><th>Order</th><th>Price</th><th>Avg fill</th><th>Size</th><th>Filled</th><th>Status</th><th>PnL</th><th>ROE %</th><th>Lev.</th><th>TIF</th><th>Flags</th></tr></thead><tbody>` +
+      o.slice(0, SHOWN.ohist).map(x => `<tr><td class="num">${dt(x.createdAt)}</td><td>${esc(x.marketDisplayName)}</td><td><span class="${x.side === 'BUY' ? 'pos' : 'neg'}">${x.side === 'BUY' ? '▲' : '▼'} ${esc(x.dir || x.side)}</span> ${esc(String(x.orderType || '').toLowerCase())}</td><td class="num">${n(x.price) ? pxf(n(x.price)) : '—'}</td><td class="num">${n(x.avgFillPrice) ? pxf(n(x.avgFillPrice)) : '—'}</td><td class="num">${fmt(n(x.originalSize), 4)}</td><td class="num">${fmt(n(x.filledSize), 4)}</td><td>${esc(x.status.toLowerCase().replace(/_/g, ' '))}</td><td class="num ${cls(n(x.pnl))}">${n(x.pnl) ? smoney(n(x.pnl), 2) : '—'}</td><td class="num ${cls(n(x.roe))}">${n(x.roe) ? sgn(n(x.roe), 2) + '%' : '—'}</td><td class="num">${x.leverage ? esc(x.leverage) + '× ' + (/iso/i.test(x.marginMode) ? 'iso' : 'x') : '—'}</td><td>${esc(x.timeInForce || '—')}</td><td>${x.reduceOnly ? 'reduce' : '—'}</td></tr>`).join('') + `</tbody></table></div>` + moreNote('ohist', o.length, 'orders');
+  } },
+  { id: 'tradehist', title: 'Trade history', sub: S => 'positions from open to close · ' + fsub(S), w: 12, render(S) {
+    if (!S.fills.length) return S.fillsDone ? '<div class="empty">No fills</div>' : '<div class="empty">Loading fills…</div>';
+    const T = tradeCycles(S.fills), done = T.filter(t => !t.open && !t.incomplete); if (!T.length) return '<div class="empty">No trades</div>';
+    const w = done.filter(t => t.net > 0), l = done.filter(t => t.net < 0), avg = a => a.length ? a.reduce((x, t) => x + t.net, 0) / a.length : 0, dur2 = ms => dur(ms / 1000);
+    const list = T.slice().sort((a, b) => (b.open - a.open) || (b.t1 - a.t1));
+    return `<div class="rows">` + row('Trades (closed / open)', `${fmt(done.length, 0)} / ${fmt(T.filter(t => t.open).length, 0)}`, 'a trade = one position of a market from the first opening fill until it is fully closed (or reversed)') +
+      row('Win rate (by net PnL)', done.length ? fmt(w.length / done.length * 100, 1) + '%' : '—') + row('Average win / loss', done.length ? `${smoney(avg(w), 2)} / ${smoney(avg(l), 2)}` : '—') +
+      row('Best / worst trade', done.length ? `${smoney(Math.max(...done.map(t => t.net)), 2)} / ${smoney(Math.min(...done.map(t => t.net)), 2)}` : '—') + row('Average duration', done.length ? dur2(done.reduce((a, t) => a + (t.t1 - t.t0) / 1000, 0) / done.length) : '—') + `</div>` +
+      `<div class="scroll" style="max-height:420px;margin-top:8px"><table><thead><tr><th>Market</th><th>Side</th><th>Opened</th><th>Closed</th><th>Held</th><th>Max size</th><th>Avg entry</th><th>Avg exit</th><th>Volume</th><th>Realized</th><th>Fees</th><th>Net</th><th>Fills</th></tr></thead><tbody>` +
+      list.slice(0, SHOWN.trades).map(t => `<tr><td>${esc(t.m)}</td><td><span class="tag ${t.side > 0 ? 'ok' : 'bad'}">${t.side > 0 ? '▲ LONG' : '▼ SHORT'}</span></td><td class="num">${dt(t.t0)}${t.incomplete ? ' *' : ''}</td><td class="num">${t.open ? '<span class="tag warn">open</span>' : dt(t.t1)}</td><td class="num">${dur2((t.open ? Date.now() * 1000 : t.t1) / 1000 - t.t0 / 1000)}</td><td class="num">${fmt(t.maxQ, 4)}</td><td class="num">${t.inQ ? pxf(t.inV / t.inQ) : '—'}</td><td class="num">${t.outQ ? pxf(t.outV / t.outQ) : '—'}</td><td class="num">$${big(t.vol)}</td><td class="num ${cls(t.pnl)}">${smoney(t.pnl, 2)}</td><td class="num">${fmt(t.fee, 2)}</td><td class="num ${cls(t.net)}">${smoney(t.net, 2)}</td><td class="num">${t.n}</td></tr>`).join('') + `</tbody></table></div>` + moreNote('trades', list.length, 'trades') +
+      `<p class="note">Built from the loaded fills. * = the position was already open before the first loaded fill, so its start (and entry price) is incomplete — load more fills in the “Fills” menu or pick “All time”.</p>`;
   } },
   { id: 'conditional', title: 'TP/SL, trigger & TWAP orders', sub: 'now / history', w: 6, render(S) {
     const c = S.cond; if (!c) return '<div class="empty">Loading…</div>';
     const sec = (title, a) => { const keys = ['coin', 'dir', 'side', 'limitPx', 'triggerPx', 'triggerCondition', 'sz', 'origSz', 'orderType', 'status', 'state', 'timestamp'], ks = a.length ? keys.filter(k => a.some(x => x[k] != null || (x.order && x.order[k] != null))) : [];
       const val = (x, k) => { const v = x[k] != null ? x[k] : x.order && x.order[k]; return k === 'timestamp' ? dt(v * US) : esc(k === 'coin' ? coinName(v) : v == null ? '—' : v); };
       return `<div class="rows" style="margin-top:6px"><div class="row"><span><b>${title}</b></span><span>${fmt(a.length, 0)}</span></div></div>` + (a.length ? `<div class="scroll" style="max-height:160px"><table><thead><tr>${ks.map(k => `<th>${k}</th>`).join('')}</tr></thead><tbody>${a.slice(0, 40).map(x => `<tr>${ks.map(k => `<td>${val(x, k)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : ''); };
-    return sec('Position TP/SL orders', c.tpsl) + sec('Trigger orders (open)', c.trig) + sec('Trigger orders (history)', c.htrig) + sec('TWAP orders (history)', c.twap) + sec('TWAP slice fills', c.twapSl);
+    const mkts = {}; Object.values(S.account.positions).forEach(p => mkts[p.marketId] = n(p.markPx));
+    const tpslSec = (title, a, hist) => { const price = x => n(x) ? pxf(n(x)) : '—', dist = (x, c) => n(x) && mkts[c] ? ` <span class="muted">${sgn((n(x) - mkts[c]) / mkts[c] * 100, 2)}%</span>` : '';
+      return `<div class="rows" style="margin-top:6px"><div class="row"><span><b>${title}</b></span><span>${fmt(a.length, 0)}</span></div></div>` + (a.length ? `<div class="scroll" style="max-height:200px"><table><thead><tr><th>Market</th><th title="Side of the closing order">Closes</th><th>Take profit</th><th>Stop loss</th><th title="0 = the whole position">Size</th><th>Order type</th><th>Mode</th><th>Lev.</th><th>Created</th>${hist ? '<th>State</th>' : ''}</tr></thead><tbody>` +
+        a.slice(0, 40).map(x => `<tr><td>${esc(coinName(x.coin))}</td><td>${x.side === 'B' ? 'buy (short)' : 'sell (long)'}</td><td class="num">${price(x.tpTriggerPrice)}${hist ? '' : dist(x.tpTriggerPrice, x.coin)}</td><td class="num">${price(x.slTriggerPrice)}${hist ? '' : dist(x.slTriggerPrice, x.coin)}</td><td class="num">${n(x.quantity) ? fmt(n(x.quantity), 4) : 'all'}</td><td>${esc([n(x.tpTriggerPrice) && x.tpOrderType, n(x.slTriggerPrice) && x.slOrderType].filter(Boolean).join(' / ').toLowerCase() || '—')}</td><td>${esc(String(x.positionMode || '').toLowerCase())} ${/iso/i.test(x.marginMode || '') ? 'iso' : 'cross'}</td><td class="num">${x.leverage ? esc(x.leverage) + '×' : '—'}</td><td class="num">${x.createTime ? dt(x.createTime * US) : '—'}</td>${hist ? `<td>${esc(String(x.state || '').toLowerCase())}${x.cancelSource ? ' · ' + esc(String(x.cancelSource).replace(/([A-Z])/g, ' $1').trim().toLowerCase()) : ''}</td>` : ''}</tr>`).join('') + `</tbody></table></div>` : ''); };
+    return tpslSec('Position TP/SL orders (open)', c.tpsl, false) + tpslSec('TP/SL history', c.htpsl || [], true) + sec('Trigger orders (open)', c.trig) + sec('Trigger orders (history)', c.htrig) + sec('TWAP orders (history)', c.twap) + sec('TWAP slice fills', c.twapSl);
   } },
 ];
 const TITLES = Object.fromEntries(CARDS.map(c => [c.id, c.title]));
@@ -604,6 +666,25 @@ function cardsHTML(S, list, pr) {
     `<section class="card w${c.w}" data-card="${c.id}"><h2>${c.title}${c.sub ? `<span class="sub">${typeof c.sub === 'function' ? c.sub(S) : c.sub}</span>` : ''}</h2>${c.render(S)}</section>`).join('');
 }
 function drawAll(out, list) { list.forEach(c => { if (c.after) { try { c.after($(`[data-card=${c.id}]`, out), S); } catch (e) { console.error(c.id, e); } } }); }
+/* positions of every market from the first opening fill until the position is flat (or reversed), built from the per-fill startPosition */
+function tradeCycles(fills) {
+  const asc = fills.slice().sort((a, b) => a.createdAt - b.createdAt || a.tid - b.tid), cur = {}, out = [], mk = (m, side, f, incomplete) => ({ m, side, t0: f.createdAt, t1: f.createdAt, n: 0, vol: 0, fee: 0, pnl: 0, inQ: 0, inV: 0, outQ: 0, outV: 0, maxQ: 0, open: true, incomplete });
+  for (const f of asc) {
+    const m = f.marketDisplayName, sz = n(f.size), px = n(f.price), sg = f.side === 'BUY' ? 1 : -1, sp = f.startPos || 0, eps = 1e-9 * Math.max(1, Math.abs(sp));
+    let c = cur[m]; if (!c) c = cur[m] = mk(m, sp === 0 ? sg : Math.sign(sp), f, sp !== 0);
+    c.n++; c.vol += sz * px; c.fee += n(f.fee); c.pnl += n(f.closedPnl); c.t1 = f.createdAt;
+    if (sg === c.side) { c.inQ += sz; c.inV += sz * px; c.maxQ = Math.max(c.maxQ, Math.abs(sp + sg * sz)); }
+    else {
+      const closeQ = Math.min(sz, Math.abs(sp)); c.outQ += closeQ; c.outV += closeQ * px;
+      if (Math.abs(sp) - sz <= eps) {   // flat or reversed: this trade ends here
+        c.open = false; c.net = c.pnl - c.fee; out.push(c); delete cur[m];
+        const rest = sz - Math.abs(sp); if (rest > eps) { const r = cur[m] = mk(m, sg, f, false); r.n = 1; r.vol = rest * px; r.inQ = rest; r.inV = rest * px; r.maxQ = rest; }
+      }
+    }
+  }
+  Object.values(cur).forEach(c => { c.net = c.pnl - c.fee; out.push(c); });
+  return out;
+}
 /* leverage / margin / opening-closing breakdown from the per-fill fields (leverage, marginMode, startPosition) */
 function levStats(fills) {
   const r = { vol: 0, wlev: 0, maxLev: 0, lev: {}, modes: {}, open: 0, close: 0, flip: 0, twap: 0, ro: 0, closeLong: { n: 0, pnl: 0 }, closeShort: { n: 0, pnl: 0 }, fee: {} };
@@ -620,7 +701,8 @@ function prepare() { S.risk = riskCalc(S.account, S.mk); S.fs = fillStats(S.fill
 function render() {
   if (!S) return;
   prepare();
-  const out = $('#out'), list = CARDS.filter(c => enabled.has(c.id)), pr = getPeriod(S);
+  const ORDER = ['summary', 'volume', 'pnl', 'equity', 'pnlchart', 'perf', 'risk', 'positions', 'activity', 'leverage', 'curve', 'daily', 'volday', 'hourly', 'bymarket', 'trades', 'orderflow', 'dailytable', 'tradehist', 'orderhist', 'funding', 'transfers', 'orders', 'conditional', 'fills', 'spot', 'feetier', 'vaults', 'referral', 'campaigns', 'leaderboards', 'rewards'], ix = c => { const i = ORDER.indexOf(c.id); return i < 0 ? 99 : i; };
+  const out = $('#out'), list = CARDS.filter(c => enabled.has(c.id)).sort((a, b) => ix(a) - ix(b)), pr = getPeriod(S);
   out.innerHTML = cardsHTML(S, list, pr);
   const draw = () => drawAll(out, list);
   draw(); cancelAnimationFrame(render.raf); render.raf = requestAnimationFrame(() => { const w = out.clientWidth; if (w !== render.w) { render.w = w; draw(); } });
@@ -652,13 +734,37 @@ async function loadWallet(addr, opts = {}) {
   const keepFills = opts.keep && S ? S.fills : [];
   S = { addr, idx: 0, account: normAccount(ch, transfers), mk, fee, vlm: vlmOf(fee), transfers, openOrders: Array.isArray(open) ? open.map(normOpen) : [],
     funding: opts.keep && S ? S.funding : undefined, fills: keepFills, fillsDone: false, sortKey: S && S.sortKey, sortDir: S && S.sortDir,
-    ...(opts.keep && S ? { spot: S.spot, spotFills: S.spotFills, vaults: S.vaults, selfVault: S.selfVault, ref: S.ref, camp: S.camp, cond: S.cond } : {}) };
+    ...(opts.keep && S ? { hist: S.hist, spot: S.spot, spotFills: S.spotFills, vaults: S.vaults, selfVault: S.selfVault, ref: S.ref, camp: S.camp, cond: S.cond } : {}) };
   location.hash = addr;
   rememberWallet(addr);
   renderPeriodBar();
   render();
   loadFills(my, opts.keep);
-  loadFunding(my); loadOrders(my); loadExtra(my);
+  loadFunding(my); loadOrders(my); loadHistory(my); loadExtra(my);
+}
+/* equity / PnL history, period summaries and APR computed by the exchange (works for any address, no sign-in) + the rewards hub list */
+let REWARDS = null;
+async function loadHistory(my) {
+  const addr = S.addr, live = () => my === runId && S && S.addr === addr, safe = p => p.catch(e => (console.warn(e), null)), day = ms => new Date(ms).toISOString().slice(0, 10);
+  const first = S.transfers && S.transfers.length ? Math.min(...S.transfers.map(x => x.createdAt)) / US : Date.now() - 30 * 864e5;
+  const body = { user_addresses: [addr], start_date: day(Math.max(first - 864e5, Date.now() - 360 * 864e5)), end_date: day(Date.now()) }, per = ['24H', '7D', '30D', '90D', 'ALLTIME'];
+  const [pnl, eq, apr7, apr30, ...ovs] = await Promise.all([safe(info({ type: 'multiUserPnl', ...body })), safe(info({ type: 'multiUserEquitySnapshots', ...body })),
+    safe(info({ type: 'multiUserApr', user_addresses: [addr], period_days: 7 })), safe(info({ type: 'multiUserApr', user_addresses: [addr], period_days: 30 })),
+    ...per.map(p => safe(info({ type: 'userOverview', user_address: addr, period: p })))]);
+  if (!live()) return;
+  S.hist = { pnl: (pnl && pnl.data) || [], eq: (eq && eq.data) || [], top: pnl, apr: { 7: apr7, 30: apr30 }, ov: Object.fromEntries(per.map((p, i) => [p, ovs[i]])) };
+  if (REWARDS !== null) S.rewards = REWARDS;
+  render();
+  if (!REWARDS) { REWARDS = await safe(info({ type: 'rewardsHubList', lang: 'en' })) || false; }
+  if (live()) { S.rewards = REWARDS; render(); }
+}
+/* daily series of the selected period: 'eq' = equity, 'pnl' = PnL rebased to the start of the period */
+function histSeries(S, kind) {
+  const H = S.hist; if (!H) return []; const rows = kind === 'eq' ? H.eq : H.pnl, key = kind === 'eq' ? 'snapshotDate' : 'pnlDate', pr = getPeriod(S), t = r => Date.parse(r[key] + 'T00:00:00Z');
+  let i0 = rows.findIndex(r => n(r.totalEquity) || n(r.totalCurrEquity) || n(r.totalPnl)); if (i0 < 0) return []; const live = rows.slice(i0);
+  const sel = pr ? live.filter(r => t(r) + 864e5 > pr.from / US && t(r) <= pr.to / US) : live;
+  const prev = pr && sel.length ? live.find(r => t(r) === t(sel[0]) - 864e5) : null, base = prev ? n(prev.totalPnl) : 0;
+  return sel.map(r => [t(r) * US, kind === 'eq' ? n(r.totalEquity) : n(r.totalPnl) - base]);
 }
 /* everything else the public API has for an address: spot, vaults, referrals, campaigns, conditional orders */
 async function loadExtra(my) {
@@ -671,6 +777,7 @@ async function loadExtra(my) {
   if (!live()) return;
   S.spot = spot; S.ref = ref; S.selfVault = selfV && selfV.name ? selfV : null;
   S.cond = { tpsl: Array.isArray(tpsl) ? tpsl : [], trig: Array.isArray(trig) ? trig : [], htrig: Array.isArray(htrig) ? htrig : [], twap: Array.isArray(twap) ? twap : [], twapSl: twapSl && twapSl.twapSliceFills || [] };
+  const htpsl = await safe(info({ type: 'historicalTpslOrders', user: addr })); if (!live()) return; S.cond.htpsl = Array.isArray(htpsl) ? htpsl : [];
   S.camp = { unlock, royale, ascent, pts, bonus, royale1, bull, plb: plb && plb.leaderboard || [] };
   render(); loadTickers(my); loadBoards(my);
   const eq = Array.isArray(vEq) ? vEq.slice(0, 12) : [];
@@ -693,10 +800,6 @@ const TK = {};   // marketTicker cache by instrument id
 async function loadTickers(my) {
   if (!S) return; const addr = S.addr, live = () => my === runId && S && S.addr === addr, ids = new Map();
   Object.values(S.account.positions).forEach(p => p.instrumentId != null && ids.set(String(p.instrumentId), 1));
-  const oc = {}; (S.openOrders || []).forEach(o => { if (o.instrumentId != null) oc[o.instrumentId] = (oc[o.instrumentId] || 0) + 1; });
-  Object.entries(oc).sort((a, b) => b[1] - a[1]).slice(0, 15).forEach(([id]) => ids.set(String(id), 1));
-  const fv = {}; (S.fills || []).forEach(f => { if (f.instrumentId != null) fv[f.instrumentId] = (fv[f.instrumentId] || 0) + n(f.size) * n(f.price); });
-  Object.entries(fv).sort((a, b) => b[1] - a[1]).slice(0, 15).forEach(([id]) => ids.set(String(id), 1));
   S.tkIds = [...ids.keys()];
   const need = [...ids.keys()].filter(id => !TK[id] || Date.now() - TK[id].at > 60000).slice(0, 40);
   for (let i = 0; i < need.length; i += 5) {
@@ -714,12 +817,13 @@ async function loadFunding(my) {
   S.fundingDone = true; render();
 }
 async function loadOrders(my) {
-  const pr = getPeriod(S); S.orders = null;
+  const addr = S.addr, pr = getPeriod(S), live = () => my === runId && S && S.addr === addr; S.orders = null; S.ordersDone = false;
   try {
-    const d = await info({ type: 'historicalOrders', user: S.addr, startTimeMs: pr ? Math.floor(pr.from / US) : 0, endTimeMs: pr ? Math.ceil(pr.to / US) : Date.now() + 6e4, limit: 300 });
-    if (my !== runId) return; S.orders = Array.isArray(d) ? d.map(normOrder) : [];
-  } catch (e) { if (my !== runId) return; S.orders = []; }
-  render();
+    const r = await pullBack({ type: 'historicalOrders', user: addr }, { from: pr ? pr.from / US : 0, to: pr ? pr.to / US : Date.now() + 6e4, cap: pr ? 20000 : 3000, id: x => x.order.oid, t: x => x.order.timestamp, norm: normOrder, live,
+      onPage: out => { if (live()) { S.orders = out.slice(); render(); } } });
+    if (r === null || !live()) return; S.orders = r;
+  } catch (e) { if (!live()) return; console.warn(e); S.orders = S.orders || []; }
+  S.ordersDone = true; render();
 }
 let fillSeq = 0;
 async function loadFills(my, incremental) {
@@ -748,6 +852,7 @@ function renderRecent() { const r = store.get('recent', []); $('#recent').innerH
 $('#recent').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { $('#addr').value = b.dataset.a; loadWallet(b.dataset.a); } });
 $('#form').addEventListener('submit', e => { e.preventDefault(); loadWallet($('#addr').value.trim()); });
 $('#out').addEventListener('click', e => {
+  const mo = e.target.closest('[data-more]'); if (mo && S) { const [k, all] = mo.dataset.more.split(':'); SHOWN[k] = all ? 1e9 : SHOWN[k] + 200; render(); return; }
   const lb = e.target.closest('[data-lb]'); if (lb && S) { LB_SEL = lb.dataset.lb; render(); return; }
   const th = e.target.closest('th[data-sort]'); if (th && S) { const k = th.dataset.sort; S.sortDir = S.sortKey === k ? -(S.sortDir || -1) : (k === 'k' ? 1 : -1); S.sortKey = k; render(); }
 });
