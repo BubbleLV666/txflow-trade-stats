@@ -1181,8 +1181,13 @@ $('#ver').textContent = VERSION;
 async function loadPlatform() {
   try {
     const d = await info({ type: 'allMarketTickers' }), p = d.filter(x => x.instrumentId < 1e4), vol = p.reduce((a, x) => a + n(x.dayNtlVlm), 0), spot = d.filter(x => x.instrumentId >= 1e4).reduce((a, x) => a + n(x.dayNtlVlm), 0);
-    $('#platV').textContent = '$' + big(vol); $('#plat').title = `Volume of all ${p.length} perpetual markets on TxFlow over the last 24 hours (rolling window). Spot: $${big(spot)}. Updated ${new Date().toLocaleTimeString('en-US', { hour12: false })}.`;
-  } catch (e) { $('#platV').textContent = '—'; }
+    const oi = p.reduce((s, x) => s + n(x.openInterest) * n(x.markPx), 0), top = p.slice().sort((x, y) => n(y.openInterest) * n(y.markPx) - n(x.openInterest) * n(x.markPx)).slice(0, 3).map(x => `${coinName(x.coin)} $${big(n(x.openInterest) * n(x.markPx))}`).join(', ');
+    $('#platOI').textContent = '$' + big(oi); 
+    $('#platV').textContent = '$' + big(vol); $('#plat').title = `All ${p.length} perpetual markets on TxFlow.
+Volume: last 24 hours (rolling window). Spot volume: $${big(spot)}.
+OI: open interest in USD (open interest in coins × mark price). Largest: ${top}.
+Updated ${new Date().toLocaleTimeString('en-US', { hour12: false })}.`;
+  } catch (e) { $('#platV').textContent = '—'; $('#platOI').textContent = '—'; }
 }
 loadPlatform(); setInterval(() => { if (!document.hidden) loadPlatform(); }, 60000);
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
