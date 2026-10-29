@@ -1198,10 +1198,13 @@ loadPlatform(); setInterval(() => { if (!document.hidden) loadPlatform(); }, 600
 
 /* ---- Leaderboards tab: rankings of the past trading competitions of TxFlow (the API has no all-time / per-window ranking of PnL or volume) */
 const LBT = { sel: store.get('lb_sel', null), meta: null, found: null, tok: 0 };
+const SNAP = window.TF_SNAPSHOT || {};   // finished competitions are static (competitions-data.js)
 async function lbtMeta() {
   if (LBT.meta) return LBT.meta;
+  if (LB_BOARDS.every(b => SNAP[b.code])) { const m = {}; LB_BOARDS.forEach(b => { m[b.code] = SNAP[b.code].meta; }); return LBT.meta = m; }
   const g = p => p.catch(() => null), [r1, r2, bull] = await Promise.all([g(info({ type: 'traderRoyaleInfo', activityCode: 'trader_royale' })), g(info({ type: 'traderRoyaleInfo', activityCode: 'trader_royale_2' })), g(info({ type: 'pnlRoiInfo', activityCode: 'bull_pit' }))]);
   const m = {}; if (r1 && r1.activity) m.trader_royale = r1.activity; if (r2 && r2.activity) m.trader_royale_2 = r2.activity; ((bull && bull.activities) || []).forEach(a => { m[a.activityCode] = a; });
+  LB_BOARDS.forEach(b => { if (SNAP[b.code]) m[b.code] = SNAP[b.code].meta; });
   return LBT.meta = m;
 }
 function lbtUi() { $('#lbSel').innerHTML = LB_BOARDS.map(b => `<button data-c="${b.code}" class="${b.code === LBT.sel ? 'on' : ''}" type="button">${b.title}</button>`).join(''); }
@@ -1212,7 +1215,8 @@ async function lbtLoad(force) {
     const meta = await lbtMeta(); if (tok !== LBT.tok) return;
     if (!LB_BOARDS.some(b => b.code === LBT.sel)) { const live = LB_BOARDS.find(b => (meta[b.code] || {}).status === 1), last = LB_BOARDS.slice().sort((x, y) => ((meta[y.code] || {}).endTime || 0) - ((meta[x.code] || {}).endTime || 0))[0]; LBT.sel = (live || last).code; }
     lbtUi(); const b = LB_BOARDS.find(x => x.code === LBT.sel);
-    if (force || !LBC[b.code]) LBC[b.code] = await info({ type: b.type, activityCode: b.code, pageNo: 1, pageSize: 50 }); if (tok !== LBT.tok) return;
+    if (SNAP[b.code]) { const sn = SNAP[b.code]; LBC[b.code] = { participantCount: sn.participantCount, statsUpdatedAt: sn.statsUpdatedAt, page: { items: sn.items } }; }
+    else if (force || !LBC[b.code]) LBC[b.code] = await info({ type: b.type, activityCode: b.code, pageNo: 1, pageSize: 50 }); if (tok !== LBT.tok) return;
     lbtStatus(''); lbtRender();
   } catch (e) { if (tok === LBT.tok) lbtStatus('Could not load the leaderboard: ' + esc(e.message), true); }
 }
@@ -1223,7 +1227,7 @@ function lbtRender() {
   const me = new Set([LBT.found && LBT.found.mask, S && maskOf(S.addr)].filter(Boolean)), metric = b.metric === 'pnl' ? 'PnL' : b.metric === 'roi' ? 'ROI' : 'Final volume', medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r;
   $('#lbTable').innerHTML = !items.length ? '<tr><td class="empty" style="text-align:center">No data</td></tr>' : `<thead><tr><th>#</th><th style="text-align:left">Address</th><th>Taker volume</th><th>${metric}</th><th>Est. reward</th></tr></thead><tbody>` +
     items.map(r => `<tr class="lbrow${me.has(String(r.userAddress).toLowerCase()) ? ' me' : ''}"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="lbaddr" style="text-align:left">${esc(fullOf(r.userAddress))}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num ${b.metric === 'pnl' ? cls(n(r.pnl)) : ''}">${b.metric === 'pnl' ? smoney(n(r.pnl), 0) : b.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`).join('') + '</tbody>';
-  $('#lbNote').textContent = 'Top 50 of each competition. TxFlow shows the addresses in short form; a row shows the full address once you have opened that wallet on this site (it is remembered only in your browser). The wallet opened in My stats is highlighted.';
+  $('#lbNote').textContent = (SNAP[b.code] ? 'Saved snapshot of a finished competition (taken ' + SNAP[b.code].savedAt + '): these rows are static and are not reloaded from the API. ' : '') + 'Top 50 of each competition. TxFlow shows the addresses in short form; a row shows the full address once you have opened that wallet on this site (it is remembered only in your browser). The wallet opened in My stats is highlighted.';
 }
 function lbtFind(text) {
   const t = String(text || '').trim().toLowerCase(), box = $('#lbFound');
