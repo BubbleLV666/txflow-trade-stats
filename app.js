@@ -121,7 +121,8 @@ function lineChart(box, pts, o) {
   if (o.zero) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--ink-3)" stroke-dasharray="3 3"/>`;
   const d = pts.map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join('');
   const base = Y(Math.max(y0, Math.min(y1, 0)));
-  const area = o.area ? `<path d="${d}L${X(x1)} ${base}L${X(x0)} ${base}Z" fill="${o.color}" opacity=".10"/>` : '';
+  const gid = 'ga' + (lineChart.n = (lineChart.n || 0) + 1);
+  const area = o.area ? `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${o.color}" stop-opacity=".34"/><stop offset="1" stop-color="${o.color}" stop-opacity="0"/></linearGradient></defs><path d="${d}L${X(x1)} ${base}L${X(x0)} ${base}Z" fill="url(#${gid})"/>` : '';
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}${area}<path d="${d}" fill="none" stroke="${o.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><g class="hv" style="display:none"><line y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-3)"/><circle r="4" fill="${o.color}" stroke="var(--surface)" stroke-width="2"/></g></svg><div class="tt"></div>`;
   hover(box, W, H, (px) => {
     let lo = 0, hi = pts.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (X(pts[mid][0]) < px) lo = mid + 1; else hi = mid; }
