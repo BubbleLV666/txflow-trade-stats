@@ -1245,11 +1245,11 @@ function showView(v, keepHash) {
   $('#viewStats').hidden = lbv; $('#viewLb').hidden = !lbv;
   document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === v));
   $('#btnShare').hidden = lbv; $('#btnCards').hidden = lbv; if (lbv) $('#cardsPanel').hidden = true;
-  if (!keepHash) history.replaceState(null, '', lbv ? '#leaderboards' : (S ? '#' + S.addr : location.pathname + location.search));
+  if (!keepHash) history.replaceState(null, '', lbv ? '#competitions' : (S ? '#' + S.addr : location.pathname + location.search));
   if (lbv) lbtLoad();
 }
 $('#tabs').addEventListener('click', e => { const t = e.target.closest('.tab'); if (t) showView(t.dataset.view); });
-addEventListener('hashchange', () => { if (location.hash.slice(1) === 'leaderboards') showView('lb', true); else if ($('#viewStats').hidden) showView('stats', true); });
+addEventListener('hashchange', () => { if (location.hash.slice(1) === 'competitions') showView('lb', true); else if ($('#viewStats').hidden) showView('stats', true); });
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
-{ const h = location.hash.slice(1); if (h === 'leaderboards') showView('lb', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
+{ const h = location.hash.slice(1); if (h === 'competitions') showView('lb', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
 })();
