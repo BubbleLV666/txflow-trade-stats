@@ -217,8 +217,10 @@ function weeksList() {
   return a;
 }
 const wkLabel = w => w.n >= 1 ? 'Week ' + w.n : 'Pre-season ' + new Date(w.from).toISOString().slice(5, 10).split('-').reverse().join('.');
+const PRESETS = [['24h', '24 h', 'Last 24 hours', 864e5], ['7d', '7 d', 'Last 7 days', 7 * 864e5], ['30d', '30 d', 'Last 30 days', 30 * 864e5], ['90d', '90 d', 'Last 90 days', 90 * 864e5]];
 function getPeriod(S) {   // null = all time; else { label, from, to } in microseconds
   if (period.key === 'total') return null;
+  const pz = PRESETS.find(x => x[0] === period.key); if (pz) return { label: pz[2], from: (Date.now() - pz[3]) * 1000, to: Date.now() * 1000 };
   if (period.key === 'custom') return period.from && period.to ? { label: dtlU(period.from * 1000) + ' – ' + dtlU(period.to * 1000) + ' GMT', from: period.from * 1000, to: period.to * 1000 } : null;
   const w = weeksList();
   if (period.key === 'cur') { const c = w[w.length - 1]; return { label: `Current week (${c.n})`, from: c.from * 1000, to: Date.now() * 1000 }; }
@@ -875,7 +877,7 @@ let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(ren
 function renderPeriodBar() {
   const w = weeksList(), bar = $('#periodbar'), k = period.key, fmtD = ms => new Date(ms).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
   const btn = (key, label, small) => `<button class="pbtn ${k === key ? 'on' : ''}" data-p="${key}">${label}${small ? `<small>${small}</small>` : ''}</button>`;
-  bar.innerHTML = btn('total', 'All time') + w.filter(x => !x.cur).map(x => btn('w' + x.n, x.n >= 1 ? 'Week ' + x.n : 'Pre-season', fmtD(x.from) + '–' + fmtD(x.end))).join('') +
+  bar.innerHTML = btn('total', 'All time') + PRESETS.map(x => btn(x[0], x[1])).join('') + w.filter(x => !x.cur).map(x => btn('w' + x.n, x.n >= 1 ? 'Week ' + x.n : 'Pre-season', fmtD(x.from) + '–' + fmtD(x.end))).join('') +
     (w.length ? btn('cur', 'Current', w[w.length - 1].cur ? 'week ' + w[w.length - 1].n : '') : '') + btn('custom', 'Custom range…') +
     `<span class="pdesc" title="Weeks (TxFlow points epochs) run from Monday 00:00 GMT to Sunday 23:59 GMT. Week 1 = Epoch I of Season One, started on 12 Oct 2026 and ends on 18 Oct 23:59:59 GMT (the end time comes from the TxFlow API). Trading before that is covered by All time or a custom range.">ⓘ weeks: Mon–Sun, 00:00 GMT</span>`;
   $('#custom').hidden = k !== 'custom'; $('#pnote').textContent = 'Weeks (TxFlow points epochs) run from Monday 00:00 GMT (UTC) to Sunday 23:59 GMT. Week 1 of Season 1 started on 12 Oct 2026; the points snapshot is taken when a week ends. Earlier Monday–Sunday weeks are shown as Pre-season (back to the first deposit, at most 40 weeks); use a custom range for anything older.';
