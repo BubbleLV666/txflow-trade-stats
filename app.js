@@ -587,7 +587,7 @@ const CARDS = [
     const actOf = code => code === 'trader_royale' ? c.royale1 && c.royale1.activity : code === 'trader_royale_2' ? c.royale && c.royale.activity : ((c.bull && c.bull.activities) || []).find(a => a.activityCode === code);
     const userOf = code => code === 'trader_royale' ? c.royale1 && c.royale1.user : code === 'trader_royale_2' ? c.royale && c.royale.user : (((c.bull && c.bull.activities) || []).find(a => a.activityCode === code) || {}).user;
     const ranked = LB_BOARDS.find(b => (userOf(b.code) || {}).rank > 0), sel = LB_BOARDS.find(b => b.code === LB_SEL) || ranked || LB_BOARDS[1], u = userOf(sel.code) || {}, a = actOf(sel.code) || {}, L = B[sel.code], ts = ms => dtlU(ms * US) + ' GMT';
-    let h = `<p class="note" style="margin:0 0 10px">These are the rankings of TxFlow's <b>past trading competitions</b> (Trader Royale, Bull Pit): each has its own period and prize pool, a finished one is marked “finished”. TxFlow publishes no all-time or per-period ranking of PnL or volume, so a wallet appears here only if it took part in the competition.</p><div class="seg" style="margin-bottom:8px">` + LB_BOARDS.map(b => `<button data-lb="${b.code}" class="${b.code === sel.code ? 'on' : ''}" type="button">${b.title}${(userOf(b.code) || {}).rank > 0 ? ' · #' + userOf(b.code).rank : ''}</button>`).join('') + `</div>`;
+    let h = `<p class="note" style="margin:0 0 10px">These are the rankings of TxFlow's <b>past trading competitions</b> (Trader Royale, Bull Pit): each has its own period and prize pool, a finished one is marked “finished”. TxFlow publishes no all-time or per-period ranking of PnL or volume, so a wallet appears here only if it took part in the competition. TxFlow shows the addresses in short form; a row shows the full address once you have opened that wallet on this site (it is remembered only in your browser).</p><div class="seg" style="margin-bottom:8px">` + LB_BOARDS.map(b => `<button data-lb="${b.code}" class="${b.code === sel.code ? 'on' : ''}" type="button">${b.title}${(userOf(b.code) || {}).rank > 0 ? ' · #' + userOf(b.code).rank : ''}</button>`).join('') + `</div>`;
     h += `<div class="rows">` + row('Competition', esc(a.name || sel.title) + (a.status === 2 ? ' <span class="tag">finished</span>' : a.status === 1 ? ' <span class="tag ok">live</span>' : '')) + (a.startTime ? row('Period', `${ts(a.startTime)} → ${ts(a.endTime)}`) : '') +
       (a.unlockedPrizePool ? row('Prize pool', `${fmt(n(a.unlockedPrizePool), 0)} of ${fmt(n(a.maxPrizePool), 0)} max`) : '') + (a.totalVolume ? row('Total volume', '$' + big(n(a.totalVolume))) : '') +
       (L ? row('Participants', fmt(n(L.participantCount), 0)) + row('Stats updated', dtl(L.statsUpdatedAt * US)) : '') +
@@ -597,7 +597,7 @@ const CARDS = [
     const items = L && L.page && L.page.items || [];
     h += !S.boards ? '<div class="empty">Loading leaderboards…</div>' : !items.length ? '<div class="empty">No leaderboard data</div>' :
       `<div class="scroll" style="max-height:340px;margin-top:8px"><table><thead><tr><th>#</th><th>Address (masked by the API)</th><th>Taker volume</th><th>${sel.metric === 'pnl' ? 'PnL' : sel.metric === 'roi' ? 'ROI' : 'Final volume'}</th><th>Est. reward</th></tr></thead><tbody>` +
-      items.map(r => { const me = String(r.userAddress).toLowerCase() === mask; return `<tr${me ? ' style="background:var(--surface-2);font-weight:700"' : ''}><td class="num">${r.rank}</td><td>${esc(r.userAddress)}${me ? ' ← this address' : ''}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num">${sel.metric === 'pnl' ? smoney(n(r.pnl), 0) : sel.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`; }).join('') + `</tbody></table></div><p class="note">Top 50 of each competition. The API masks addresses, so a row is matched to this address by its first 6 and last 4 characters.</p>`;
+      items.map(r => { const me = String(r.userAddress).toLowerCase() === mask; return `<tr${me ? ' style="background:var(--surface-2);font-weight:700"' : ''}><td class="num">${r.rank}</td><td>${esc(fullOf(r.userAddress))}${me ? ' ← this address' : ''}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num">${sel.metric === 'pnl' ? smoney(n(r.pnl), 0) : sel.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`; }).join('') + `</tbody></table></div><p class="note">Top 50 of each competition. The API masks addresses, so a row is matched to this address by its first 6 and last 4 characters.</p>`;
     const P = c.pts, pl = c.plb || [];
     h += `<div class="rows" style="margin-top:12px"><div class="row"><span><b>Points (Season 1)</b></span><span></span></div>` + (P ? row('Current epoch', esc(P.currentEpochId || '—') + ' · Season 1') + row('Epoch ends', P.currentEpochEndsAt ? `${ts(P.currentEpochEndsAt)} · ${(P.currentEpochEndsAt - Date.now()) > 0 ? 'in ' + dur((P.currentEpochEndsAt - Date.now()) / 1000) : 'ended'}` : '—') +
       row('Points updated', P.lastUpdateAt ? dtlU(P.lastUpdateAt * US) + ' GMT' : '—', 'time of the last points distribution (credited on the Tuesday after an epoch ends)') +
@@ -797,9 +797,12 @@ async function loadExtra(my) {
   try { const sf = await pullBack({ type: 'userFills', user: addr, accountType: ['spot'] }, { from: 0, to: Date.now() + 6e4, cap: 3000, id: f => f.tid + '_' + f.oid, t: f => f.time, norm: normSpotFill, live }); if (sf && live()) { S.spotFills = sf; render(); } } catch (e) { console.warn(e); if (live()) S.spotFills = S.spotFills || []; }
 }
 /* competition leaderboards (top 50, addresses are masked by the API as 0x1234…abcd) */
+const fullOf = m => { const k = String(m).toLowerCase(); for (const a of KNOWN) if (maskOf(a) === k) return a; return m; };
 const LB_BOARDS = [{ code: 'trader_royale', type: 'traderRoyaleLeaderboardPage', title: 'Trader Royale', metric: 'vol' }, { code: 'trader_royale_2', type: 'traderRoyaleLeaderboardPage', title: 'Trader Royale 2', metric: 'vol' },
   { code: 'bull_pit_pnl', type: 'pnlRoiLeaderboardPage', title: 'Bull Pit · PnL', metric: 'pnl' }, { code: 'bull_pit_roi', type: 'pnlRoiLeaderboardPage', title: 'Bull Pit · ROI', metric: 'roi' }];
 const LBC = {}; let LB_SEL = null;
+const KNOWN = new Set(store.get('known', []));   // full addresses opened on this site (only in this browser): used to show the full address in a masked leaderboard row
+const maskOf = a => (a.slice(0, 6) + '...' + a.slice(-4)).toLowerCase();
 async function loadBoards(my) {
   const addr = S.addr, live = () => my === runId && S && S.addr === addr;
   for (const b of LB_BOARDS) {
@@ -858,7 +861,7 @@ async function loadFills(my, incremental) {
 }
 
 /* ---------------------------------------------------------------- UI wiring */
-function rememberWallet(a) { const r = [a, ...store.get('recent', []).filter(x => x !== a)].slice(0, 5); store.set('recent', r); renderRecent(); }
+function rememberWallet(a) { const r = [a, ...store.get('recent', []).filter(x => x !== a)].slice(0, 5); store.set('recent', r); renderRecent(); KNOWN.add(a.toLowerCase()); store.set('known', [...KNOWN].slice(-500)); }
 function renderRecent() { const r = store.get('recent', []); $('#recent').innerHTML = r.map(a => `<button class="chip" data-a="${a}">${a.slice(0, 6)}…${a.slice(-4)}</button>`).join(''); }
 $('#recent').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { $('#addr').value = b.dataset.a; loadWallet(b.dataset.a); } });
 $('#form').addEventListener('submit', e => { e.preventDefault(); loadWallet($('#addr').value.trim()); });
