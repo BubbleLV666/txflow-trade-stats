@@ -595,10 +595,10 @@ const CARDS = [
     if (pl.length) { const ks = Object.keys(pl[0]).slice(0, 6); h += `<div class="scroll" style="max-height:300px"><table><thead><tr>${ks.map(k => `<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${pl.slice(0, 100).map(r => `<tr${String(r.address || r.userAddress || '').toLowerCase() === mask ? ' style="background:var(--surface-2);font-weight:700"' : ''}>${ks.map(k => `<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
     return h;
   } },
-  { id: 'equity', title: 'Equity history', sub: S => 'daily · ' + (getPeriod(S) ? getPeriod(S).label : 'all time'), w: 6, render() { return '<div class="chartbox" data-ch="equity"></div>'; },
+  { id: 'equity', title: 'Equity', sub: S => 'daily · ' + (getPeriod(S) ? getPeriod(S).label : 'all time'), w: 6, render() { return '<div class="chartbox" data-ch="equity"></div>'; },
     after(el, S) { const b = $('[data-ch=equity]', el); if (!S.hist) { b.innerHTML = '<div class="empty">Loading…</div>'; return; }
       lineChart(b, histSeries(S, 'eq'), { color: css('--s1'), area: true, minRange: 1, axis: v => money(v, 0), tip: v => money(v, 2), xfmt: dshort, tfmt: dshort }); } },
-  { id: 'pnlchart', title: 'PnL history', sub: S => 'cumulative, daily · ' + (getPeriod(S) ? getPeriod(S).label : 'all time'), w: 6, render() { return '<div class="chartbox" data-ch="pnlh"></div>'; },
+  { id: 'pnlchart', title: 'PnL over period', sub: S => 'cumulative, daily · ' + (getPeriod(S) ? getPeriod(S).label : 'all time'), w: 6, render() { return '<div class="chartbox" data-ch="pnlh"></div>'; },
     after(el, S) { const b = $('[data-ch=pnlh]', el); if (!S.hist) { b.innerHTML = '<div class="empty">Loading…</div>'; return; }
       lineChart(b, histSeries(S, 'pnl'), { color: css('--s2'), zero: true, minRange: 1, axis: v => smoney(v, 0), tip: v => smoney(v, 2), xfmt: dshort, tfmt: dshort }); } },
   { id: 'perf', title: 'Performance (exchange stats)', sub: 'computed by TxFlow', w: 6, render(S) {
@@ -701,7 +701,7 @@ function prepare() { S.risk = riskCalc(S.account, S.mk); S.fs = fillStats(S.fill
 function render() {
   if (!S) return;
   prepare();
-  const ORDER = ['summary', 'volume', 'pnl', 'equity', 'pnlchart', 'perf', 'risk', 'positions', 'activity', 'leverage', 'curve', 'daily', 'volday', 'hourly', 'bymarket', 'trades', 'orderflow', 'dailytable', 'tradehist', 'orderhist', 'funding', 'transfers', 'orders', 'conditional', 'fills', 'spot', 'feetier', 'vaults', 'referral', 'campaigns', 'leaderboards', 'rewards'], ix = c => { const i = ORDER.indexOf(c.id); return i < 0 ? 99 : i; };
+  const ORDER = ['summary', 'volume', 'pnl', 'equity', 'pnlchart', 'risk', 'positions', 'activity', 'curve', 'perf', 'leverage', 'daily', 'volday', 'hourly', 'bymarket', 'trades', 'orderflow', 'dailytable', 'tradehist', 'orderhist', 'funding', 'transfers', 'orders', 'conditional', 'fills', 'spot', 'feetier', 'vaults', 'referral', 'campaigns', 'leaderboards', 'rewards'], ix = c => { const i = ORDER.indexOf(c.id); return i < 0 ? 99 : i; };
   const out = $('#out'), list = CARDS.filter(c => enabled.has(c.id)).sort((a, b) => ix(a) - ix(b)), pr = getPeriod(S);
   out.innerHTML = cardsHTML(S, list, pr);
   const draw = () => drawAll(out, list);
