@@ -581,23 +581,13 @@ const CARDS = [
       (B.tasks || []).map(t => row(esc(String(t.taskCode).replace(/_/g, ' ')), `${fmt(n(t.current), 2)} / ${fmt(n(t.target), 0)} · ${esc(String(t.state).toLowerCase())}`)).join('') + `</div>`;
     return h + `<p class="note">Points and some campaign data are returned by the API only to the signed-in owner of the address, so personal figures may show zeros.</p>`;
   } },
-  { id: 'leaderboards', title: 'Leaderboards & points', sub: 'past trading competitions', w: 12, render(S) {
+  { id: 'leaderboards', title: 'Points', sub: 'TxFlow Points · Season 1', w: 12, render(S) {
     const c = S.camp; if (!c) return '<div class="empty">Loading…</div>';
     const mask = (S.addr.slice(0, 6) + '...' + S.addr.slice(-4)).toLowerCase(), B = S.boards || {};
     const actOf = code => code === 'trader_royale' ? c.royale1 && c.royale1.activity : code === 'trader_royale_2' ? c.royale && c.royale.activity : ((c.bull && c.bull.activities) || []).find(a => a.activityCode === code);
     const userOf = code => code === 'trader_royale' ? c.royale1 && c.royale1.user : code === 'trader_royale_2' ? c.royale && c.royale.user : (((c.bull && c.bull.activities) || []).find(a => a.activityCode === code) || {}).user;
     const ranked = LB_BOARDS.find(b => (userOf(b.code) || {}).rank > 0), sel = LB_BOARDS.find(b => b.code === LB_SEL) || ranked || LB_BOARDS[1], u = userOf(sel.code) || {}, a = actOf(sel.code) || {}, L = B[sel.code], ts = ms => dtlU(ms * US) + ' GMT';
-    let h = `<p class="note" style="margin:0 0 10px">These are the rankings of TxFlow's <b>past trading competitions</b> (Trader Royale, Bull Pit): each has its own period and prize pool, a finished one is marked “finished”. TxFlow publishes no all-time or per-period ranking of PnL or volume, so a wallet appears here only if it took part in the competition. TxFlow shows the addresses in short form; a row shows the full address once you have opened that wallet on this site (it is remembered only in your browser).</p><div class="seg" style="margin-bottom:8px">` + LB_BOARDS.map(b => `<button data-lb="${b.code}" class="${b.code === sel.code ? 'on' : ''}" type="button">${b.title}${(userOf(b.code) || {}).rank > 0 ? ' · #' + userOf(b.code).rank : ''}</button>`).join('') + `</div>`;
-    h += `<div class="rows">` + row('Competition', esc(a.name || sel.title) + (a.status === 2 ? ' <span class="tag">finished</span>' : a.status === 1 ? ' <span class="tag ok">live</span>' : '')) + (a.startTime ? row('Period', `${ts(a.startTime)} → ${ts(a.endTime)}`) : '') +
-      (a.unlockedPrizePool ? row('Prize pool', `${fmt(n(a.unlockedPrizePool), 0)} of ${fmt(n(a.maxPrizePool), 0)} max`) : '') + (a.totalVolume ? row('Total volume', '$' + big(n(a.totalVolume))) : '') +
-      (L ? row('Participants', fmt(n(L.participantCount), 0)) + row('Stats updated', dtl(L.statsUpdatedAt * US)) : '') +
-      row('This address', u.rank > 0 ? `<b>rank #${u.rank}</b>` : u.joined || u.registeredAt ? 'joined, not in the top ' + (a.topN || 50) : 'did not join') +
-      (n(u.takerVolume) ? row('Taker volume', '$' + big(n(u.takerVolume))) : '') + (u.pnl != null && sel.metric === 'pnl' ? row('PnL', smoney(n(u.pnl), 2)) : '') + (u.roi != null && sel.metric === 'roi' ? row('ROI', fmt(n(u.roi) * 100, 2) + '%') : '') +
-      (n(u.estimatedReward) ? row('Estimated reward', fmt(n(u.estimatedReward), 2)) : '') + (n(u.volumeGapToTop50) ? row('Volume gap to top 50', '$' + big(n(u.volumeGapToTop50))) : '') + (n(u.volumeGapToLeaderboard) ? row('Volume gap to leaderboard', '$' + big(n(u.volumeGapToLeaderboard))) : '') + `</div>`;
-    const items = L && L.page && L.page.items || [];
-    h += !S.boards ? '<div class="empty">Loading leaderboards…</div>' : !items.length ? '<div class="empty">No leaderboard data</div>' :
-      `<div class="scroll" style="max-height:340px;margin-top:8px"><table><thead><tr><th>#</th><th>Address (masked by the API)</th><th>Taker volume</th><th>${sel.metric === 'pnl' ? 'PnL' : sel.metric === 'roi' ? 'ROI' : 'Final volume'}</th><th>Est. reward</th></tr></thead><tbody>` +
-      items.map(r => { const me = String(r.userAddress).toLowerCase() === mask; return `<tr${me ? ' style="background:var(--surface-2);font-weight:700"' : ''}><td class="num">${r.rank}</td><td>${esc(fullOf(r.userAddress))}${me ? ' ← this address' : ''}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num">${sel.metric === 'pnl' ? smoney(n(r.pnl), 0) : sel.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`; }).join('') + `</tbody></table></div><p class="note">Top 50 of each competition. The API masks addresses, so a row is matched to this address by its first 6 and last 4 characters.</p>`;
+    let h = '';
     const P = c.pts, pl = c.plb || [];
     h += `<div class="rows" style="margin-top:12px"><div class="row"><span><b>Points (Season 1)</b></span><span></span></div>` + (P ? row('Current epoch', esc(P.currentEpochId || '—') + ' · Season 1') + row('Epoch ends', P.currentEpochEndsAt ? `${ts(P.currentEpochEndsAt)} · ${(P.currentEpochEndsAt - Date.now()) > 0 ? 'in ' + dur((P.currentEpochEndsAt - Date.now()) / 1000) : 'ended'}` : '—') +
       row('Points updated', P.lastUpdateAt ? dtlU(P.lastUpdateAt * US) + ' GMT' : '—', 'time of the last points distribution (credited on the Tuesday after an epoch ends)') +
@@ -790,7 +780,7 @@ async function loadExtra(my) {
   S.cond = { tpsl: Array.isArray(tpsl) ? tpsl : [], trig: Array.isArray(trig) ? trig : [], htrig: Array.isArray(htrig) ? htrig : [], twap: Array.isArray(twap) ? twap : [], twapSl: twapSl && twapSl.twapSliceFills || [] };
   const htpsl = await safe(info({ type: 'historicalTpslOrders', user: addr })); if (!live()) return; S.cond.htpsl = Array.isArray(htpsl) ? htpsl : [];
   S.camp = { unlock, royale, ascent, pts, bonus, royale1, bull, plb: plb && plb.leaderboard || [] };
-  render(); loadTickers(my); loadBoards(my);
+  render(); loadTickers(my);
   const eq = Array.isArray(vEq) ? vEq.slice(0, 12) : [];
   S.vaults = await Promise.all(eq.map(async v => ({ ...v, detail: await safe(info({ type: 'vaultDetails', vaultAddress: v.vaultAddress })) })));
   if (!live()) return; render();
@@ -1205,6 +1195,57 @@ Updated ${new Date().toLocaleTimeString('en-US', { hour12: false })}.`;
 }
 loadPlatform(); setInterval(() => { if (!document.hidden) loadPlatform(); }, 60000);
 
+
+/* ---- Leaderboards tab: rankings of the past trading competitions of TxFlow (the API has no all-time / per-window ranking of PnL or volume) */
+const LBT = { sel: store.get('lb_sel', null), meta: null, found: null, tok: 0 };
+async function lbtMeta() {
+  if (LBT.meta) return LBT.meta;
+  const g = p => p.catch(() => null), [r1, r2, bull] = await Promise.all([g(info({ type: 'traderRoyaleInfo', activityCode: 'trader_royale' })), g(info({ type: 'traderRoyaleInfo', activityCode: 'trader_royale_2' })), g(info({ type: 'pnlRoiInfo', activityCode: 'bull_pit' }))]);
+  const m = {}; if (r1 && r1.activity) m.trader_royale = r1.activity; if (r2 && r2.activity) m.trader_royale_2 = r2.activity; ((bull && bull.activities) || []).forEach(a => { m[a.activityCode] = a; });
+  return LBT.meta = m;
+}
+function lbtUi() { $('#lbSel').innerHTML = LB_BOARDS.map(b => `<button data-c="${b.code}" class="${b.code === LBT.sel ? 'on' : ''}" type="button">${b.title}</button>`).join(''); }
+const lbtStatus = (html, err, busy) => { const el = $('#lbStatus'); el.className = 'status' + (err ? ' err' : '') + (busy ? ' busy' : ''); el.innerHTML = (busy ? '<i class="spin"></i>' : '') + html; };
+async function lbtLoad(force) {
+  const tok = ++LBT.tok; lbtStatus('Loading the leaderboard…', false, true);
+  try {
+    const meta = await lbtMeta(); if (tok !== LBT.tok) return;
+    if (!LB_BOARDS.some(b => b.code === LBT.sel)) { const live = LB_BOARDS.find(b => (meta[b.code] || {}).status === 1), last = LB_BOARDS.slice().sort((x, y) => ((meta[y.code] || {}).endTime || 0) - ((meta[x.code] || {}).endTime || 0))[0]; LBT.sel = (live || last).code; }
+    lbtUi(); const b = LB_BOARDS.find(x => x.code === LBT.sel);
+    if (force || !LBC[b.code]) LBC[b.code] = await info({ type: b.type, activityCode: b.code, pageNo: 1, pageSize: 50 }); if (tok !== LBT.tok) return;
+    lbtStatus(''); lbtRender();
+  } catch (e) { if (tok === LBT.tok) lbtStatus('Could not load the leaderboard: ' + esc(e.message), true); }
+}
+function lbtRender() {
+  const b = LB_BOARDS.find(x => x.code === LBT.sel), a = (LBT.meta || {})[b.code] || {}, L = LBC[b.code], items = (L && L.page && L.page.items) || [], ts = ms => dtlU(ms * US) + ' GMT';
+  $('#lbKpis').innerHTML = [['Competition', esc(a.name || b.title) + (a.status === 2 ? ' <small class="muted">finished</small>' : a.status === 1 ? ' <small class="pos">live</small>' : '')], ['Period', a.startTime ? `${ts(a.startTime)}<br>→ ${ts(a.endTime)}` : '—'], ['Prize pool', a.unlockedPrizePool ? fmt(n(a.unlockedPrizePool), 0) + ' <small class="muted">of ' + fmt(n(a.maxPrizePool), 0) + ' max</small>' : '—'],
+    ['Total volume', a.totalVolume ? '$' + big(n(a.totalVolume)) : '—'], ['Participants', L ? fmt(n(L.participantCount), 0) : '—'], ['Stats updated', L && L.statsUpdatedAt ? dtl(L.statsUpdatedAt * US) : '—']].map(([k, v]) => `<div>${k}<b class="num" style="font-size:15px">${v}</b></div>`).join('');
+  const me = new Set([LBT.found && LBT.found.mask, S && maskOf(S.addr)].filter(Boolean)), metric = b.metric === 'pnl' ? 'PnL' : b.metric === 'roi' ? 'ROI' : 'Final volume', medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r;
+  $('#lbTable').innerHTML = !items.length ? '<tr><td class="empty" style="text-align:center">No data</td></tr>' : `<thead><tr><th>#</th><th style="text-align:left">Address</th><th>Taker volume</th><th>${metric}</th><th>Est. reward</th></tr></thead><tbody>` +
+    items.map(r => `<tr class="lbrow${me.has(String(r.userAddress).toLowerCase()) ? ' me' : ''}"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="lbaddr" style="text-align:left">${esc(fullOf(r.userAddress))}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num ${b.metric === 'pnl' ? cls(n(r.pnl)) : ''}">${b.metric === 'pnl' ? smoney(n(r.pnl), 0) : b.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`).join('') + '</tbody>';
+  $('#lbNote').textContent = 'Top 50 of each competition. TxFlow shows the addresses in short form; a row shows the full address once you have opened that wallet on this site (it is remembered only in your browser). The wallet opened in My stats is highlighted.';
+}
+function lbtFind(text) {
+  const t = String(text || '').trim().toLowerCase(), box = $('#lbFound');
+  if (!/^0x[0-9a-f]{40}$/.test(t)) { box.innerHTML = '<div class="lbfoundbox neg">Enter a wallet address: 0x followed by 40 hex characters</div>'; return; }
+  const mask = maskOf(t), b = LB_BOARDS.find(x => x.code === LBT.sel), L = LBC[b.code], r = ((L && L.page && L.page.items) || []).find(x => String(x.userAddress).toLowerCase() === mask);
+  LBT.found = { mask }; KNOWN.add(t); store.set('known', [...KNOWN].slice(-500));
+  box.innerHTML = r ? `<div class="lbfoundbox"><span class="lbaddr">${esc(t)}</span><b>Rank #${r.rank}</b><span>Taker volume $${big(n(r.takerVolume))}</span><span>Est. reward ${fmt(n(r.estimatedReward), 0)}</span></div>` : `<div class="lbfoundbox">Not in the top 50 of <b>${esc(b.title)}</b> (or it did not join).</div>`;
+  lbtRender();
+}
+$('#lbSel').addEventListener('click', e => { const x = e.target.closest('button[data-c]'); if (!x) return; LBT.sel = x.dataset.c; store.set('lb_sel', LBT.sel); LBT.found = null; $('#lbFound').innerHTML = ''; lbtLoad(); });
+$('#lbRefresh').onclick = () => lbtLoad(true);
+$('#lbFind').addEventListener('submit', e => { e.preventDefault(); lbtFind($('#lbAddr').value); });
+function showView(v, keepHash) {
+  const lbv = v === 'lb';
+  $('#viewStats').hidden = lbv; $('#viewLb').hidden = !lbv;
+  document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === v));
+  $('#btnShare').hidden = lbv; $('#btnCards').hidden = lbv; if (lbv) $('#cardsPanel').hidden = true;
+  if (!keepHash) history.replaceState(null, '', lbv ? '#leaderboards' : (S ? '#' + S.addr : location.pathname + location.search));
+  if (lbv) lbtLoad();
+}
+$('#tabs').addEventListener('click', e => { const t = e.target.closest('.tab'); if (t) showView(t.dataset.view); });
+addEventListener('hashchange', () => { if (location.hash.slice(1) === 'leaderboards') showView('lb', true); else if ($('#viewStats').hidden) showView('stats', true); });
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
-{ const h = location.hash.slice(1); if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
+{ const h = location.hash.slice(1); if (h === 'leaderboards') showView('lb', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
 })();

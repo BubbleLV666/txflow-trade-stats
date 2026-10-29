@@ -25,6 +25,13 @@
     <button id="btnTheme" class="btn" title="Theme">◐</button>
   </header>
 
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button class="tab on" data-view="stats" type="button">📊 My stats</button>
+    <button class="tab" data-view="lb" type="button">🏆 Leaderboards</button>
+  </nav>
+
+  <div id="viewStats">
+
   <form id="form" class="search" autocomplete="off">
     <input id="addr" type="text" spellcheck="false" placeholder="Wallet address 0x…" aria-label="Wallet address" autocomplete="off">
     <select id="depth" aria-label="Fills to analyze" title="How many of the most recent fills to analyze. If the analysis looks incomplete, pick a larger number.">
@@ -55,6 +62,20 @@
     <p>Paste an address — the site queries the public TxFlow API directly and shows equity, PnL, volume, fees, positions with liquidation prices, maker/taker split, per-market breakdown, funding, deposits and withdrawals. No keys or sign-in needed; the address is sent nowhere except the TxFlow API.</p>
     <p class="muted">TxFlow points are not shown per address: the API returns them only to the wallet owner after sign-in. There is also no per-address leaderboard rank or equity history in the public API.</p>
   </section>
+
+  </div>
+
+  <div id="viewLb" hidden>
+    <p class="note" style="margin:0 0 10px">Rankings of the <b>past trading competitions</b> of TxFlow (Trader Royale, Bull Pit): each has its own period and prize pool. TxFlow publishes no all-time or per-period ranking of PnL or volume, only these top 50 lists.</p>
+    <div class="lbctl">
+      <div class="seg lbseg" id="lbSel"></div>
+      <button class="btn" id="lbRefresh" type="button">↻ Refresh</button>
+      <form id="lbFind" class="lbfind" autocomplete="off"><input id="lbAddr" type="text" spellcheck="false" placeholder="Find an address in this ranking…" aria-label="Address to find"><button class="btn small" type="submit">Find</button></form>
+    </div>
+    <div id="lbStatus" class="status" role="status"></div>
+    <div id="lbFound"></div>
+    <section class="card w12 lbcard"><div id="lbKpis" class="lbkpis"></div><div class="scroll" style="max-height:none"><table id="lbTable"></table></div><p class="note" id="lbNote"></p></section>
+  </div>
 
   <footer>
     Unofficial project, not affiliated with TxFlow. Data comes from the public API <code>api.txflow.com</code>; it may lag or contain exchange errors.
@@ -93,6 +114,6 @@
 </div></dialog>
 <div id="cal" class="cal" hidden></div>
 <script>(function(){var h=location.hostname;if(h&&h!=="localhost"&&h!=="127.0.0.1"){var b=document.querySelector("a.brand");if(b){b.removeAttribute("href");b.style.cursor="default";}}})();</script>
-<script src="app.js?v=1793267046"></script>
+<script src="app.js?v=1793267435"></script>
 </body>
 </html>
