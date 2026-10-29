@@ -14,9 +14,15 @@ const big = x => { const a = Math.abs(x); return a >= 1e9 ? fmt(x / 1e9, 2) + 'B
 const usd = x => (x < 0 ? '−' : '') + '$' + big(Math.abs(x));   // axis labels: −$1.2K, never $-1.2K
 const cls = x => x > 1e-9 ? 'pos' : x < -1e-9 ? 'neg' : '';
 const pxf = p => p == null ? '—' : p >= 1000 ? fmt(p, 2) : p >= 1 ? fmt(p, 3) : fmt(p, 5);
-const dt = us => new Date(us / 1000).toLocaleString('en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-const dtl = us => new Date(us / 1000).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-const dtlU = us => new Date(us / 1000).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+const pad2 = v => String(v).padStart(2, '0');
+/* every date of the site is written day.month.year (24-hour time); local time unless utc is set */
+function fmtDt(ms, o = {}) {
+  const d = new Date(ms), g = o.utc ? [d.getUTCDate(), d.getUTCMonth() + 1, d.getUTCFullYear(), d.getUTCHours(), d.getUTCMinutes()] : [d.getDate(), d.getMonth() + 1, d.getFullYear(), d.getHours(), d.getMinutes()];
+  return pad2(g[0]) + '.' + pad2(g[1]) + (o.year ? '.' + String(g[2]).slice(-2) : '') + (o.noTime ? '' : ' ' + pad2(g[3]) + ':' + pad2(g[4]));
+}
+const dt = us => fmtDt(us / 1000);
+const dtl = us => fmtDt(us / 1000, { year: true });
+const dtlU = us => fmtDt(us / 1000, { year: true, utc: true });
 const dur = s => { s = Math.max(0, s | 0); const d = s / 86400 | 0, h = (s % 86400) / 3600 | 0, m = (s % 3600) / 60 | 0; return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
 const store = { get(k, d) { try { const v = localStorage.getItem('tf_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem('tf_' + k, JSON.stringify(v)); } catch (e) { } } };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -162,8 +168,8 @@ function hover(box, W, H, f) {
   box.onmouseleave = () => { hv.style.display = 'none'; tip.style.display = 'none'; };
 }
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const tshort = t => new Date(t / 1000).toLocaleString('en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
-const dshort = t => new Date(t / 1000).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' });
+const tshort = t => fmtDt(t / 1000);
+const dshort = t => fmtDt(t / 1000, { noTime: true });
 
 /* ---------------------------------------------------------------- derived data */
 function fillStats(fills) {
@@ -877,15 +883,15 @@ $('#btnTheme').onclick = () => { const dark = root.dataset.theme ? root.dataset.
 let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 150); });
 /* ---- period bar */
 function renderPeriodBar() {
-  const w = weeksList(), bar = $('#periodbar'), k = period.key, fmtD = ms => new Date(ms).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+  const w = weeksList(), bar = $('#periodbar'), k = period.key, fmtD = ms => fmtDt(ms, { utc: true, noTime: true });
   const btn = (key, label, small) => `<button class="pbtn ${k === key ? 'on' : ''}" data-p="${key}">${label}${small ? `<small>${small}</small>` : ''}</button>`;
   bar.innerHTML = btn('total', 'All time') + PRESETS.map(x => btn(x[0], x[1])).join('') + w.filter(x => !x.cur).map(x => btn('w' + x.n, x.n >= 1 ? 'Week ' + x.n : 'Pre-season', fmtD(x.from) + '–' + fmtD(x.end))).join('') +
     (w.length ? btn('cur', 'Current', w[w.length - 1].cur ? 'week ' + w[w.length - 1].n : '') : '') + btn('custom', 'Custom range…') +
     `<span class="pdesc" title="Weeks (TxFlow points epochs) run from Monday 00:00 GMT to Sunday 23:59 GMT. Week 1 = Epoch I of Season One, started on 12 Oct 2026 and ends on 18 Oct 23:59:59 GMT (the end time comes from the TxFlow API). Trading before that is covered by All time or a custom range.">ⓘ weeks: Mon–Sun, 00:00 GMT</span>`;
   $('#custom').hidden = k !== 'custom'; $('#pnote').textContent = 'Weeks (TxFlow points epochs) run from Monday 00:00 GMT (UTC) to Sunday 23:59 GMT. Week 1 of Season 1 started on 12 Oct 2026; the points snapshot is taken when a week ends. Earlier Monday–Sunday weeks are shown as Pre-season (back to the first deposit, at most 40 weeks); use a custom range for anything older.';
 }
-const toGmtInput = ms => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
-const parseGmt = v => { const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?$/.exec(v.trim()); if (!m) return NaN; return Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)); };
+const toGmtInput = ms => { const d = new Date(ms); return pad2(d.getUTCDate()) + '.' + pad2(d.getUTCMonth() + 1) + '.' + d.getUTCFullYear() + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); };
+const parseGmt = v => { v = v.trim(); let m = /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})(?: (\d{1,2}):(\d{2}))?$/.exec(v), Y, M, D; if (m) { D = +m[1]; M = +m[2]; Y = +m[3]; } else { m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?$/.exec(v); if (!m) return NaN; Y = +m[1]; M = +m[2]; D = +m[3]; } return Date.UTC(Y, M - 1, D, +(m[4] || 0), +(m[5] || 0)); };
 function applyPeriod(p) {
   period = p; renderPeriodBar();
   if (!S) return; S.fills = []; S.fillsDone = false; render(); loadFills(runId, false); loadFunding(runId); loadOrders(runId);
@@ -895,7 +901,7 @@ $('#periodbar').addEventListener('click', e => {
   if (key === 'custom') { const now = Date.now(); if (!period.from) { $('#pf').value = toGmtInput(now - 86400e3); $('#pt').value = toGmtInput(now); } period = { ...period, key: 'custom' }; renderPeriodBar(); if (period.from && period.to) applyPeriod(period); return; }
   applyPeriod({ key });
 });
-$('#pgo').onclick = () => { const f = parseGmt($('#pf').value), t = parseGmt($('#pt').value); if (isNaN(f) || isNaN(t)) { status('Use the format YYYY-MM-DD HH:MM (GMT), e.g. 2026-10-07 00:00', true); return; } if (!(f < t)) { status('Range start must be before its end', true); return; } applyPeriod({ key: 'custom', from: f, to: t }); };
+$('#pgo').onclick = () => { const f = parseGmt($('#pf').value), t = parseGmt($('#pt').value); if (isNaN(f) || isNaN(t)) { status('Use the format DD.MM.YYYY HH:MM (GMT), e.g. 07.10.2026 00:00', true); return; } if (!(f < t)) { status('Range start must be before its end', true); return; } applyPeriod({ key: 'custom', from: f, to: t }); };
 
 /* ---------------------------------------------------------------- Share card (canvas, for Discord) */
 const SH = { week: null, tok: 0, cache: {}, fcache: {}, data: null, w: null, brand: null, size: 720,   // the only output format: 720 x 486 px
@@ -1140,7 +1146,7 @@ $('#shCopy').onclick = async () => { try { const b = await shBlob(); if (!naviga
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const cal = { el: $('#cal'), target: null, y: 0, m: 0, sel: null, hh: 0, mm: 0 };
 const p2 = v => String(v).padStart(2, '0');
-function calValue() { const [y, m, d] = cal.sel; return `${y}-${p2(m + 1)}-${p2(d)} ${p2(cal.hh)}:${p2(cal.mm)}`; }
+function calValue() { const [y, m, d] = cal.sel; return `${p2(d)}.${p2(m + 1)}.${y} ${p2(cal.hh)}:${p2(cal.mm)}`; }
 function calRender() {
   const first = new Date(Date.UTC(cal.y, cal.m, 1)), lead = (first.getUTCDay() + 6) % 7, today = new Date(), tk = [today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()].join('-');
   let cells = '';
