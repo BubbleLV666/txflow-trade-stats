@@ -339,13 +339,14 @@ const CARDS = [
   { id: 'summary', title: 'Account', w: 4, render(S) {
     const a = S.account, eq = n(a.equity), hasDep = a.netDeposits != null, dep = n(a.netDeposits), pnl = eq + n(a.vaultEquity) - dep;
     const upnl = Object.values(a.positions || {}).reduce((x, p) => x + n(p.unrealizedPnl), 0);
-    return `<div class="big num">${money(eq)}</div><div class="rows">` +
+    const vault = n(a.vaultEquity), total = eq + vault;
+    return `<div class="big num">${money(total)}</div>${vault ? '<div class="muted" style="margin:-6px 0 6px">perps equity + vaults</div>' : ''}<div class="rows">` + (vault ? row('Perps equity', money(eq)) : '') +
       row('PnL by account', hasDep ? `<span class="${cls(pnl)}">${smoney(pnl)}</span>` : '—', 'equity + vault equity − net deposits') +
       row('ROI on deposit', hasDep && dep > 0 ? `<span class="${cls(pnl)}">${sgn(pnl / dep * 100, 1)}%</span>` : '—') +
       row('Net deposits', hasDep ? money(dep) : '—') + row('Free collateral', money(n(a.freeCollateral)), 'withdrawable balance reported by the exchange') +
       row('Unrealized PnL', `<span class="${cls(upnl)}">${smoney(upnl)}</span>`, 'sum of unrealizedPnl of open positions at current mark prices') +
       (n(a.pendingDeposits) ? row('Pending deposits', money(n(a.pendingDeposits))) : '') + (n(a.pendingWithdrawals) ? row('Pending withdrawals', money(n(a.pendingWithdrawals))) : '') +
-      (n(a.vaultEquity) ? row('Vault equity', money(n(a.vaultEquity)), 'equity held by this account in the clearinghouse as vault deposits') : '') +
+      (vault ? row('Vault equity', money(vault), 'equity held by this account in the clearinghouse as vault deposits (included in the total above)') : '') +
       row('Active since', S.transfers && S.transfers.length ? dtl(Math.min(...S.transfers.map(x => x.createdAt))) : '—', 'time of the first deposit/withdrawal') +
       row('First fill', S.fills.length && S.fillsDone && !getPeriod(S) && S.fills.length < parseInt($('#depth').value, 10) ? dtl(Math.min(...S.fills.map(x => x.createdAt))) : '—', 'shown when the whole fill history is loaded') +
       row('Open positions / orders', `${fmt(Object.keys(a.positions || {}).length, 0)} / ${fmt((S.openOrders || []).length, 0)}`) +
@@ -1200,6 +1201,57 @@ Updated ${new Date().toLocaleTimeString('en-US', { hour12: false })}.`;
   } catch (e) { $('#platV').textContent = '—'; $('#platOI').textContent = '—'; }
 }
 loadPlatform(); setInterval(() => { if (!document.hidden) loadPlatform(); }, 60000);
+
+/* ---- Leaderboard tab: the competition rankings of TxFlow (the API has no all-time / per-window ranking of PnL or volume) */
+const LBT = { sel: store.get('lb_sel', null), meta: null, found: null, tok: 0 };
+async function lbtMeta() {
+  if (LBT.meta) return LBT.meta;
+  const g = p => p.catch(() => null), [r1, r2, bull] = await Promise.all([g(info({ type: 'traderRoyaleInfo', activityCode: 'trader_royale' })), g(info({ type: 'traderRoyaleInfo', activityCode: 'trader_royale_2' })), g(info({ type: 'pnlRoiInfo', activityCode: 'bull_pit' }))]);
+  const m = {}; if (r1 && r1.activity) m.trader_royale = r1.activity; if (r2 && r2.activity) m.trader_royale_2 = r2.activity; ((bull && bull.activities) || []).forEach(a => { m[a.activityCode] = a; });
+  return LBT.meta = m;
+}
+function lbtUi() { $('#lbSel').innerHTML = LB_BOARDS.map(b => `<button data-c="${b.code}" class="${b.code === LBT.sel ? 'on' : ''}" type="button">${b.title}</button>`).join(''); }
+const lbtStatus = (html, err, busy) => { const el = $('#lbStatus'); el.className = 'status' + (err ? ' err' : '') + (busy ? ' busy' : ''); el.innerHTML = (busy ? '<i class="spin"></i>' : '') + html; };
+async function lbtLoad(force) {
+  const tok = ++LBT.tok; lbtStatus('Loading the leaderboard…', false, true);
+  try {
+    const meta = await lbtMeta(); if (tok !== LBT.tok) return;
+    if (!LB_BOARDS.some(b => b.code === LBT.sel)) { const live = LB_BOARDS.find(b => (meta[b.code] || {}).status === 1), last = LB_BOARDS.slice().sort((x, y) => ((meta[y.code] || {}).endTime || 0) - ((meta[x.code] || {}).endTime || 0))[0]; LBT.sel = (live || last).code; }
+    lbtUi(); const b = LB_BOARDS.find(x => x.code === LBT.sel);
+    if (force || !LBC[b.code]) LBC[b.code] = await info({ type: b.type, activityCode: b.code, pageNo: 1, pageSize: 50 }); if (tok !== LBT.tok) return;
+    lbtStatus(''); lbtRender();
+  } catch (e) { if (tok === LBT.tok) lbtStatus('Could not load the leaderboard: ' + esc(e.message), true); }
+}
+function lbtRender() {
+  const b = LB_BOARDS.find(x => x.code === LBT.sel), a = (LBT.meta || {})[b.code] || {}, L = LBC[b.code], items = (L && L.page && L.page.items) || [], ts = ms => dtlU(ms * US) + ' GMT';
+  $('#lbKpis').innerHTML = [['Competition', esc(a.name || b.title) + (a.status === 2 ? ' <small class="muted">finished</small>' : a.status === 1 ? ' <small class="pos">live</small>' : '')], ['Period', a.startTime ? `${ts(a.startTime)}<br>→ ${ts(a.endTime)}` : '—'], ['Prize pool', a.unlockedPrizePool ? fmt(n(a.unlockedPrizePool), 0) + ' <small class="muted">of ' + fmt(n(a.maxPrizePool), 0) + ' max</small>' : '—'],
+    ['Total volume', a.totalVolume ? '$' + big(n(a.totalVolume)) : '—'], ['Participants', L ? fmt(n(L.participantCount), 0) : '—'], ['Stats updated', L && L.statsUpdatedAt ? dtl(L.statsUpdatedAt * US) : '—']].map(([k, v]) => `<div>${k}<b class="num" style="font-size:15px">${v}</b></div>`).join('');
+  const me = LBT.found && LBT.found.mask, metric = b.metric === 'pnl' ? 'PnL' : b.metric === 'roi' ? 'ROI' : 'Final volume', medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r;
+  $('#lbTable').innerHTML = !items.length ? '<tr><td class="empty" style="text-align:center">No data</td></tr>' : `<thead><tr><th>#</th><th style="text-align:left">Address (masked by the API)</th><th>Taker volume</th><th>${metric}</th><th>Est. reward</th></tr></thead><tbody>` +
+    items.map(r => `<tr class="lbrow${String(r.userAddress).toLowerCase() === me ? ' me' : ''}"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="lbaddr" style="text-align:left">${esc(r.userAddress)}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num ${b.metric === 'pnl' ? cls(n(r.pnl)) : ''}">${b.metric === 'pnl' ? smoney(n(r.pnl), 0) : b.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`).join('') + '</tbody>';
+  $('#lbNote').textContent = 'TxFlow has no all-time or per-period ranking of PnL or volume: the exchange publishes only the rankings of its competitions (top 50 each, addresses masked to the first 6 and last 4 characters). Pick a competition above; a live one updates as it runs.';
+}
+function lbtFind(text) {
+  const t = String(text || '').trim().toLowerCase(), box = $('#lbFound');
+  if (!/^0x[0-9a-f]{40}$/.test(t)) { box.innerHTML = '<div class="lbfoundbox neg">Enter a wallet address: 0x followed by 40 hex characters</div>'; return; }
+  const mask = t.slice(0, 6) + '...' + t.slice(-4), b = LB_BOARDS.find(x => x.code === LBT.sel), L = LBC[b.code], r = ((L && L.page && L.page.items) || []).find(x => String(x.userAddress).toLowerCase() === mask);
+  LBT.found = { mask };
+  box.innerHTML = r ? `<div class="lbfoundbox"><span class="lbaddr">${esc(t.slice(0, 6))}…${esc(t.slice(-4))}</span><b>Rank #${r.rank}</b><span>Taker volume $${big(n(r.takerVolume))}</span><span>Est. reward ${fmt(n(r.estimatedReward), 0)}</span></div>` : `<div class="lbfoundbox">Not in the top 50 of <b>${esc(b.title)}</b> (or it did not join).</div>`;
+  lbtRender();
+}
+$('#lbSel').addEventListener('click', e => { const x = e.target.closest('button[data-c]'); if (!x) return; LBT.sel = x.dataset.c; store.set('lb_sel', LBT.sel); LBT.found = null; $('#lbFound').innerHTML = ''; lbtLoad(); });
+$('#lbRefresh').onclick = () => lbtLoad(true);
+$('#lbFind').addEventListener('submit', e => { e.preventDefault(); lbtFind($('#lbAddr').value); });
+function showView(v, keepHash) {
+  const lbv = v === 'lb';
+  $('#viewStats').hidden = lbv; $('#viewLb').hidden = !lbv;
+  document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === v));
+  $('#btnShare').hidden = lbv; $('#btnCards').hidden = lbv; if (lbv) $('#cardsPanel').hidden = true;
+  if (!keepHash) history.replaceState(null, '', lbv ? '#leaderboard' : (S ? '#' + S.addr : location.pathname + location.search));
+  if (lbv) lbtLoad();
+}
+$('#tabs').addEventListener('click', e => { const t = e.target.closest('.tab'); if (t) showView(t.dataset.view); });
+addEventListener('hashchange', () => { if (location.hash.slice(1) === 'leaderboard') showView('lb', true); else if ($('#viewStats').hidden) showView('stats', true); });
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
-{ const h = location.hash.slice(1); if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
+{ const h = location.hash.slice(1); if (h === 'leaderboard') showView('lb', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
 })();

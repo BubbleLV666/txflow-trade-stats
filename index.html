@@ -25,6 +25,13 @@
     <button id="btnTheme" class="btn" title="Theme">◐</button>
   </header>
 
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button class="tab on" data-view="stats" type="button">📊 My stats</button>
+    <button class="tab" data-view="lb" type="button">🏆 Leaderboard</button>
+  </nav>
+
+  <div id="viewStats">
+
 
   <form id="form" class="search" autocomplete="off">
     <input id="addr" type="text" spellcheck="false" placeholder="Wallet address 0x…" aria-label="Wallet address" autocomplete="off">
@@ -57,6 +64,20 @@
     <p class="muted">TxFlow points are not shown per address: the API returns them only to the wallet owner after sign-in. There is also no per-address leaderboard rank or equity history in the public API.</p>
   </section>
 
+
+  </div>
+
+  <div id="viewLb" hidden>
+    <div class="lbctl">
+      <div class="seg lbseg" id="lbSel"></div>
+      <button class="btn" id="lbRefresh" type="button">↻ Refresh</button>
+      <form id="lbFind" class="lbfind" autocomplete="off"><input id="lbAddr" type="text" spellcheck="false" placeholder="Find an address in this ranking…" aria-label="Address to find"><button class="btn small" type="submit">Find</button></form>
+    </div>
+    <div id="lbStatus" class="status" role="status"></div>
+    <div id="lbFound"></div>
+    <section class="card w12 lbcard"><div id="lbKpis" class="lbkpis"></div><div class="scroll" style="max-height:none"><table id="lbTable"></table></div><p class="note" id="lbNote"></p></section>
+    <section class="card w12 lbcard"><h2>Points<span class="sub">TxFlow Points · Season 1</span></h2><p class="note" style="margin:0">TxFlow publishes no points ranking: the points leaderboard of the API is empty, and personal points, history and ranks are returned only to the signed-in owner of the wallet. Points are credited every Tuesday after an epoch ends and reward perpetual trading (volume, open interest quality, activity over time, fees paid, TVL contribution and referrals).</p></section>
+  </div>
 
   <footer>
     Unofficial project, not affiliated with TxFlow. Data comes from the public API <code>api.txflow.com</code>; it may lag or contain exchange errors.
@@ -94,6 +115,6 @@
   </div>
 </div></dialog>
 <div id="cal" class="cal" hidden></div>
-<script src="app.js?v=1793263505"></script>
+<script src="app.js?v=1793263815"></script>
 </body>
 </html>
