@@ -1,0 +1,6 @@
+# the data files are produced by the server bots and published in the data repository txflow-top-data
+known-wallets.js
+top-volume-data.js
+top-volume-data.js.tmp
+top-data.js
+tools/

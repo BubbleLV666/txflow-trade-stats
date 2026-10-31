@@ -107,7 +107,7 @@ function normAccount(ch, transfers) {
 /* ---------------------------------------------------------------- state */
 let S = null, runId = 0, autoTimer = null;
 const OLD_CARDS = ['summary', 'volume', 'pnl', 'risk', 'positions', 'activity', 'curve', 'bymarket', 'daily', 'hourly', 'orderflow', 'feetier', 'funding', 'transfers', 'orders', 'fills'];
-const DEFAULT_CARDS = [...OLD_CARDS, 'volday', 'leverage', 'trades', 'spot', 'vaults', 'referral', 'campaigns', 'conditional', 'leaderboards', 'equity', 'pnlchart', 'perf', 'dailytable', 'rewards', 'orderhist', 'tradehist'];
+const DEFAULT_CARDS = [...OLD_CARDS, 'volday', 'leverage', 'trades', 'spot', 'vaults', 'referral', 'campaigns', 'conditional', 'leaderboards', 'equity', 'pnlchart', 'perf', 'dailytable', 'rewards', 'orderhist', 'tradehist', 'spotvol', 'spotmk', 'spotday'];
 let enabled = new Set(store.get('cards', DEFAULT_CARDS));
 { const seen = new Set(store.get('cards_seen', OLD_CARDS)); DEFAULT_CARDS.forEach(id => { if (!seen.has(id)) enabled.add(id); }); store.set('cards_seen', DEFAULT_CARDS); store.set('cards', [...enabled]); }   // cards added in later versions switch on automatically
 
@@ -335,6 +335,23 @@ const tipFor = k => TIPS[String(k).replace(/<[^>]*>/g, '').trim()];
 const row = (k, v, title) => { const t = title || tipFor(k); return `<div class="row"${t ? ` data-tip="${esc(t)}"` : ''}><span>${k}</span><b class="num">${v}</b></div>`; };
 const SHOWN = { fills: 100, orders: 100, ohist: 100, trades: 50 };
 const moreNote = (k, total, what) => total <= SHOWN[k] ? '' : `<p class="note">Showing the latest ${fmt(SHOWN[k], 0)} of ${fmt(total, 0)} ${what}. <button class="linkbtn" data-more="${k}" type="button">Show 200 more</button> <button class="linkbtn" data-more="${k}:all" type="button">Show all</button></p>`;
+/* ---- spot market: balances, fills of the loaded history, volume per market */
+const SPOT_CAP = 10000;
+const spotPx = b => b.coin === 'USDC' ? 1 : n(b.midPrice) || n(b.lastPrice), spotVal = b => n(b.total) * spotPx(b);
+const spotTotal = S => ((S.spot && S.spot.balances) || []).reduce((a, b) => a + spotVal(b), 0);
+const spotFee = f => { const fee = n(f.fee); if (!fee) return 0; const base = String(f.marketDisplayName).split('/')[0]; return !f.feeToken || f.feeToken === 'USDC' ? fee : f.feeToken === base ? fee * n(f.price) : 0; };   // fee of a spot fill in USD (a fee in a third token is not converted)
+const spotPeriodFills = S => { const pr = getPeriod(S); return (S.spotFills || []).filter(f => inP(pr, f.createdAt)); };
+function spotStats(fills) {
+  const r = { n: fills.length, vol: 0, mvol: 0, fees: 0, buy: 0, sell: 0, byM: {}, byDay: {} };
+  for (const f of fills) {
+    const v = n(f.size) * n(f.price), maker = f.role === 'MAKER', m = r.byM[f.marketDisplayName] || (r.byM[f.marketDisplayName] = { fills: 0, vol: 0, mvol: 0, buy: 0, sell: 0, fees: 0 });
+    r.vol += v; if (maker) r.mvol += v; r.fees += spotFee(f); if (f.side === 'BUY') r.buy += v; else r.sell += v;
+    m.fills++; m.vol += v; if (maker) m.mvol += v; if (f.side === 'BUY') m.buy += v; else m.sell += v; m.fees += spotFee(f);
+    const k = new Date(f.createdAt / 1000).toISOString().slice(0, 10); r.byDay[k] = (r.byDay[k] || 0) + v;
+  }
+  return r;
+}
+const spotCover = S => { const F = S.spotFills || []; if (!F.length) return ''; const t0 = Math.min(...F.map(f => f.createdAt)); return F.length >= SPOT_CAP ? `<p class="note">Only the latest ${fmt(F.length, 0)} spot fills are loaded (back to ${dtl(t0)}): the figures above cover just these. The exchange volume of the whole period (spot and perps together) is in the rows above.</p>` : ''; };
 const CARDS = [
   { id: 'summary', title: 'Account', w: 4, render(S) {
     const a = S.account, eq = n(a.equity), hasDep = a.netDeposits != null, dep = n(a.netDeposits), pnl = eq + n(a.vaultEquity) - dep;
@@ -347,11 +364,12 @@ const CARDS = [
       row('Unrealized PnL', `<span class="${cls(upnl)}">${smoney(upnl)}</span>`, 'sum of unrealizedPnl of open positions at current mark prices') +
       (n(a.pendingDeposits) ? row('Pending deposits', money(n(a.pendingDeposits))) : '') + (n(a.pendingWithdrawals) ? row('Pending withdrawals', money(n(a.pendingWithdrawals))) : '') +
       (vault ? row('Vault equity', money(vault), 'equity held by this account in the clearinghouse as vault deposits (included in the total above)') : '') +
+      (spotTotal(S) > 0.005 ? row('Spot balance (not in the total)', money(spotTotal(S)), 'spot balances at mid price, see the SPOT cards') : '') +
       row('Active since', S.transfers && S.transfers.length ? dtl(Math.min(...S.transfers.map(x => x.createdAt))) : '—', 'time of the first deposit/withdrawal') +
       row('First fill', S.fills.length && S.fillsDone && !getPeriod(S) && S.fills.length < parseInt($('#depth').value, 10) ? dtl(Math.min(...S.fills.map(x => x.createdAt))) : '—', 'shown when the whole fill history is loaded') +
       row('Open positions / orders', `${fmt(Object.keys(a.positions || {}).length, 0)} / ${fmt((S.openOrders || []).length, 0)}`) +
       (a.stateTime ? row('State as of', dtl(a.stateTime * US)) : '') + `</div>` +
-      `<p class="note">Perpetuals account. Spot balances, vaults and campaigns have their own cards; the equity and PnL history is in the charts below.</p>`;
+      `<p class="note">Perpetuals account only. Spot balances, vaults and campaigns have their own cards; the equity and PnL history is in the charts below.</p>`;
   } },
   { id: 'volume', title: 'Volume & fees', w: 4, render(S) {
     const V = S.vlm, t = feeInfo(S), dep = n(S.account.netDeposits), pr = getPeriod(S), F = S.fs;
@@ -534,7 +552,25 @@ const CARDS = [
     const wins = srt.filter(x => n(x.pnl) > 0), losses = srt.filter(x => n(x.pnl) < 0).reverse();
     return (wins.length ? tbl('Best ' + Math.min(8, wins.length), wins.slice(0, 8)) : '<div class="empty">No profitable orders</div>') + (losses.length ? tbl('Worst ' + Math.min(8, losses.length) + ' (losing orders)', losses.slice(0, 8)) : '<div class="empty">No losing orders in the loaded history</div>') + `<p class="note">From the orders returned by the API (latest ${fmt(o.length, 0)}); PnL and ROE are the exchange's per-order values.</p>`;
   } },
-  { id: 'spot', title: 'Spot', w: 6, render(S) {
+  { id: 'spotvol', title: 'Spot volume & fees', sub: fsub, w: 4, render(S) {
+    if (!S.spotFills) return '<div class="empty">Loading spot fills…</div>';
+    const F = spotStats(spotPeriodFills(S)), OV = S.hist && S.hist.ov || {}, ov = k => OV[k] ? '$' + big(n(OV[k].volume)) : '—';
+    return `<div class="big num">$${big(F.vol)}</div><div class="muted" style="margin:-6px 0 6px">spot volume of the loaded fills · ${esc(fsub(S))}</div><div class="rows">` +
+      row('Spot fills', fmt(F.n, 0)) + row('Spot fees', money(F.fees, 2), 'in USD; a fee paid in a third token is not converted') + row('Maker / taker (by volume)', F.vol ? `${fmt(F.mvol / F.vol * 100, 0)}% / ${fmt((F.vol - F.mvol) / F.vol * 100, 0)}%` : '—') +
+      row('Average fill size', F.n ? money(F.vol / F.n, 0) : '—') + row('Bought / sold', F.vol ? `$${big(F.buy)} / $${big(F.sell)}` : '—') + row('Spot markets', fmt(Object.keys(F.byM).length, 0)) + `</div>` +
+      `<div class="rows" style="margin-top:10px"><div class="row"><span><b>Exchange volume</b> <small class="muted">spot + perps</small></span><span></span></div>` + row('Last 24 hours', ov('24H')) + row('Last 7 days', ov('7D')) + row('Last 30 days', ov('30D')) + row('All time', ov('ALLTIME')) + `</div>` + spotCover(S);
+  } },
+  { id: 'spotmk', title: 'Spot markets', sub: fsub, w: 8, render(S) {
+    if (!S.spotFills) return '<div class="empty">Loading spot fills…</div>';
+    const F = spotStats(spotPeriodFills(S)), rows = Object.entries(F.byM).map(([k, m]) => ({ k, ...m })).sort((a, b) => b.vol - a.vol); if (!rows.length) return '<div class="empty">No spot fills in this period</div>';
+    return `<div class="scroll"><table><thead><tr><th>Market</th><th>Fills</th><th>Volume $</th><th>Share</th><th>Maker %</th><th>Bought $</th><th>Sold $</th><th>Net bought $</th><th>Fees</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td>${esc(r.k)}</td><td class="num">${fmt(r.fills, 0)}</td><td class="num">${fmt(r.vol, 0)}</td><td class="num">${F.vol ? fmt(r.vol / F.vol * 100, 1) + '%' : '—'}</td><td class="num">${fmt(r.mvol / (r.vol || 1) * 100, 0)}</td><td class="num">${fmt(r.buy, 0)}</td><td class="num">${fmt(r.sell, 0)}</td><td class="num ${cls(r.buy - r.sell)}">${smoney(r.buy - r.sell, 0)}</td><td class="num">${fmt(r.fees, 2)}</td></tr>`).join('') + `</tbody></table></div>` + spotCover(S);
+  } },
+  { id: 'spotday', title: 'Spot volume by day', sub: 'loaded fills · UTC', w: 12, render() { return '<div class="chartbox" data-ch="spotday"></div>'; },
+    after(el, S) { const b = $('[data-ch=spotday]', el), F = spotStats(spotPeriodFills(S)), ks = Object.keys(F.byDay).sort(); if (!S.spotFills) { b.innerHTML = '<div class="empty">Loading…</div>'; return; } if (!ks.length) { b.innerHTML = '<div class="empty">No spot fills in this period</div>'; return; }
+      const items = ks.slice(-31).map(k => ({ label: k.slice(8, 10) + '.' + k.slice(5, 7), v: F.byDay[k] }));
+      barChart(b, items, { color: css('--s4'), axis: usd, tip: v => '$' + fmt(v, 0) }); } },
+  { id: 'spot', title: 'Spot balances & fills', w: 6, render(S) {
     const sp = S.spot, bal = sp && sp.balances || []; if (!sp) return '<div class="empty">Loading…</div>';
     const px = b => b.coin === 'USDC' ? 1 : n(b.midPrice) || n(b.lastPrice), val = b => n(b.total) * px(b), tot = bal.reduce((a, b) => a + val(b), 0), F = S.spotFills || [], fv = F.reduce((a, f) => a + n(f.size) * n(f.price), 0);
     return `<div class="big num">${money(tot)}</div><div class="muted" style="margin:-6px 0 6px">spot balances at mid price</div>` +
@@ -661,10 +697,16 @@ const TITLES = Object.fromEntries(CARDS.map(c => [c.id, c.title]));
 
 
 /* ---------------------------------------------------------------- render */
+const MKT_SETS = { perp: new Set(['summary', 'pnl', 'risk', 'positions', 'activity', 'curve', 'leverage', 'daily', 'hourly', 'bymarket', 'trades', 'orderflow', 'dailytable', 'tradehist', 'orderhist', 'funding', 'orders', 'conditional', 'fills']),
+  spot: new Set(['spot', 'spotvol', 'spotmk', 'spotday']), all: new Set(['equity', 'pnlchart', 'perf', 'volday', 'transfers']) };
+const MKT_NAME = { perp: 'PERPS', spot: 'SPOT', all: 'ALL' }, MKT_HINT = { perp: 'perpetual futures account', spot: 'spot market', all: 'the whole account (spot and perps together)' };
+const kindOf = (id, S) => id === 'volume' ? (getPeriod(S) ? 'perp' : 'all') : MKT_SETS.perp.has(id) ? 'perp' : MKT_SETS.spot.has(id) ? 'spot' : MKT_SETS.all.has(id) ? 'all' : '';
+const spotOnly = S => !!(S.spotFills && S.spotFills.length) && S.fillsDone && !S.fills.length && !Object.keys((S.account && S.account.positions) || {}).length;
 function cardsHTML(S, list, pr) {
   const addr = S.addr;
-  return `<div class="hdr"><code class="addr">${esc(addr)}</code><span class="tag ${pr ? 'warn' : ''}">${pr ? esc(pr.label) : 'all time'}</span><span class="muted" id="upd"></span></div>` + list.map(c =>
-    `<section class="card w${c.w}" data-card="${c.id}"><h2>${c.title}${c.sub ? `<span class="sub">${typeof c.sub === 'function' ? c.sub(S) : c.sub}</span>` : ''}</h2>${c.render(S)}</section>`).join('');
+  return `<div class="hdr"><code class="addr">${esc(addr)}</code><span class="tag ${pr ? 'warn' : ''}">${pr ? esc(pr.label) : 'all time'}</span><span class="mktleg"><span><span class="mkt perp">PERPS</span>perpetual futures</span><span><span class="mkt spot">SPOT</span>spot market</span><span><span class="mkt all">ALL</span>whole account</span></span><span class="muted" id="upd"></span></div>` +
+    (spotOnly(S) ? `<div class="spotbanner"><span class="mkt spot" style="margin:0">SPOT</span><span>This address trades on the <b>spot market</b>: no perpetual fills or positions, so the PERPS cards are empty. The SPOT cards below show its balances, fills and volume.</span></div>` : '') + list.map(c => { const k = kindOf(c.id, S);
+    return `<section class="card w${c.w}${k ? ' mk-' + k : ''}" data-card="${c.id}"><h2>${k ? `<span class="mkt ${k}" title="${MKT_HINT[k]}">${MKT_NAME[k]}</span>` : ''}${c.title}${c.sub ? `<span class="sub">${typeof c.sub === 'function' ? c.sub(S) : c.sub}</span>` : ''}</h2>${c.render(S)}</section>`; }).join('');
 }
 function drawAll(out, list) { list.forEach(c => { if (c.after) { try { c.after($(`[data-card=${c.id}]`, out), S); } catch (e) { console.error(c.id, e); } } }); }
 /* positions of every market from the first opening fill until the position is flat (or reversed), built from the per-fill startPosition */
@@ -702,7 +744,7 @@ function prepare() { S.risk = riskCalc(S.account, S.mk); S.fs = fillStats(S.fill
 function render() {
   if (!S) return;
   prepare();
-  const ORDER = ['summary', 'volume', 'pnl', 'equity', 'pnlchart', 'risk', 'positions', 'activity', 'curve', 'perf', 'leverage', 'daily', 'volday', 'hourly', 'bymarket', 'trades', 'orderflow', 'dailytable', 'tradehist', 'orderhist', 'funding', 'transfers', 'orders', 'conditional', 'fills', 'spot', 'feetier', 'vaults', 'referral', 'campaigns', 'leaderboards', 'rewards'], ix = c => { const i = ORDER.indexOf(c.id); return i < 0 ? 99 : i; };
+  const ORDER = ['summary', 'volume', 'pnl', 'equity', 'pnlchart', 'risk', 'positions', 'activity', 'curve', 'perf', 'leverage', 'daily', 'volday', 'hourly', 'bymarket', 'trades', 'orderflow', 'dailytable', 'tradehist', 'orderhist', 'funding', 'transfers', 'orders', 'conditional', 'fills', 'spot', 'spotvol', 'spotmk', 'spotday', 'feetier', 'vaults', 'referral', 'campaigns', 'leaderboards', 'rewards'], SPOT_FIRST = ['spotvol', 'spot', 'spotmk', 'spotday'], spotTop = spotOnly(S), ix = c => { if (spotTop && SPOT_FIRST.includes(c.id)) return -10 + SPOT_FIRST.indexOf(c.id); const i = ORDER.indexOf(c.id); return i < 0 ? 99 : i; };
   const out = $('#out'), list = CARDS.filter(c => enabled.has(c.id)).sort((a, b) => ix(a) - ix(b)), pr = getPeriod(S);
   out.innerHTML = cardsHTML(S, list, pr);
   const draw = () => drawAll(out, list);
@@ -784,7 +826,7 @@ async function loadExtra(my) {
   const eq = Array.isArray(vEq) ? vEq.slice(0, 12) : [];
   S.vaults = await Promise.all(eq.map(async v => ({ ...v, detail: await safe(info({ type: 'vaultDetails', vaultAddress: v.vaultAddress })) })));
   if (!live()) return; render();
-  try { const sf = await pullBack({ type: 'userFills', user: addr, accountType: ['spot'] }, { from: 0, to: Date.now() + 6e4, cap: 3000, id: f => f.tid + '_' + f.oid, t: f => f.time, norm: normSpotFill, live }); if (sf && live()) { S.spotFills = sf; render(); } } catch (e) { console.warn(e); if (live()) S.spotFills = S.spotFills || []; }
+  try { const sf = await pullBack({ type: 'userFills', user: addr, accountType: ['spot'] }, { from: 0, to: Date.now() + 6e4, cap: SPOT_CAP, id: f => f.tid + '_' + f.oid, t: f => f.time, norm: normSpotFill, live }); if (sf && live()) { S.spotFills = sf; render(); } } catch (e) { console.warn(e); if (live()) S.spotFills = S.spotFills || []; }
 }
 /* competition leaderboards (top 50, addresses are masked by the API as 0x1234…abcd) */
 const fullOf = m => { const k = String(m).toLowerCase(); for (const a of KNOWN) if (maskOf(a) === k) return a; return m; };
@@ -792,7 +834,8 @@ const LB_BOARDS = [{ code: 'trader_royale', type: 'traderRoyaleLeaderboardPage',
   { code: 'bull_pit_pnl', type: 'pnlRoiLeaderboardPage', title: 'Bull Pit · PnL', metric: 'pnl' }, { code: 'bull_pit_roi', type: 'pnlRoiLeaderboardPage', title: 'Bull Pit · ROI', metric: 'roi' },
   { code: 'trade_and_treat', type: 'traderRoyaleLeaderboardPage', title: 'Trade & Treat', metric: 'vol' }];
 const LBC = {}; let LB_SEL = null;
-const KNOWN = new Set(store.get('known', []));   // full addresses opened on this site (only in this browser): used to show the full address in a masked leaderboard row
+const KNOWN = new Set(store.get('known', []));
+(window.TF_WALLETS || []).forEach(a => KNOWN.add(a));   // wallets of known-wallets.js: their full address is shown in the masked rankings   // full addresses opened on this site (only in this browser): used to show the full address in a masked leaderboard row
 const maskOf = a => (a.slice(0, 6) + '...' + a.slice(-4)).toLowerCase();
 async function loadBoards(my) {
   const addr = S.addr, live = () => my === runId && S && S.addr === addr;
@@ -1188,8 +1231,8 @@ async function loadPlatform() {
     const d = await info({ type: 'allMarketTickers' }), p = d.filter(x => x.instrumentId < 1e4), vol = p.reduce((a, x) => a + n(x.dayNtlVlm), 0), spot = d.filter(x => x.instrumentId >= 1e4).reduce((a, x) => a + n(x.dayNtlVlm), 0);
     const oi = p.reduce((s, x) => s + n(x.openInterest) * n(x.markPx), 0), top = p.slice().sort((x, y) => n(y.openInterest) * n(y.markPx) - n(x.openInterest) * n(x.markPx)).slice(0, 3).map(x => `${coinName(x.coin)} $${big(n(x.openInterest) * n(x.markPx))}`).join(', ');
     $('#platOI').textContent = '$' + big(oi); 
-    $('#platV').textContent = '$' + big(vol); $('#plat').title = `All ${p.length} perpetual markets on TxFlow.
-Volume: last 24 hours (rolling window). Spot volume: $${big(spot)}.
+    $('#platV').textContent = '$' + big(vol); $('#platSpot').textContent = '$' + big(spot); $('#plat').title = `All ${p.length} perpetual markets and ${d.filter(x => x.instrumentId >= 1e4).length} spot markets on TxFlow.
+Volume: last 24 hours (rolling window), perps and spot shown separately; each trade is counted once.
 OI: open interest in USD (open interest in coins × mark price). Largest: ${top}.
 Updated ${new Date().toLocaleTimeString('en-US', { hour12: false })}.`;
   } catch (e) { $('#platV').textContent = '—'; $('#platOI').textContent = '—'; }
@@ -1227,8 +1270,8 @@ function lbtRender() {
     ['Total volume', a.totalVolume ? '$' + big(n(a.totalVolume)) : '—'], ...(a.status === 1 && n(a.nextPrizePool) ? [['Next prize level', '+' + fmt(n(a.nextPrizePool), 0) + ' <small class="muted">at $' + big(n(a.totalVolume) + n(a.volumeToNextLevel)) + ' · $' + big(n(a.volumeToNextLevel)) + ' to go</small>']] : []), ['Participants', L ? fmt(n(L.participantCount), 0) : '—'], ['Stats updated', L && L.statsUpdatedAt ? dtl(L.statsUpdatedAt * US) : '—']].map(([k, v]) => `<div>${k}<b class="num" style="font-size:15px">${v}</b></div>`).join('');
   const me = new Set([LBT.found && LBT.found.mask, S && maskOf(S.addr)].filter(Boolean)), metric = b.metric === 'pnl' ? 'PnL' : b.metric === 'roi' ? 'ROI' : 'Final volume', medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r;
   $('#lbTable').innerHTML = !items.length ? '<tr><td class="empty" style="text-align:center">No data</td></tr>' : `<thead><tr><th>#</th><th style="text-align:left">Address</th><th>Taker volume</th><th>${metric}</th><th>Est. reward</th></tr></thead><tbody>` +
-    items.map(r => r.occupied === false ? `<tr class="lbrow"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="muted" style="text-align:left">open place · needs $${big(n(r.minVolumeRequired))} volume</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>` : `<tr class="lbrow${me.has(String(r.userAddress).toLowerCase()) ? ' me' : ''}"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="lbaddr" style="text-align:left">${esc(fullOf(r.userAddress))}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num ${b.metric === 'pnl' ? cls(n(r.pnl)) : ''}">${b.metric === 'pnl' ? smoney(n(r.pnl), 0) : b.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`).join('') + '</tbody>';
-  $('#lbNote').textContent = (a.status === 1 ? 'Live competition: loaded from the TxFlow API when you open this tab (press Refresh to update). ' : '') + (SNAP[b.code] ? 'Saved snapshot of a finished competition (taken ' + SNAP[b.code].savedAt + '): these rows are static and are not reloaded from the API. ' : '') + 'Top 50 of each competition. TxFlow shows the addresses in short form; a row shows the full address once you have opened that wallet on this site (it is remembered only in your browser). The wallet opened in My stats is highlighted.';
+    items.map(r => r.occupied === false ? `<tr class="lbrow"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="muted" style="text-align:left">open place · needs $${big(n(r.minVolumeRequired))} volume</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>` : `<tr class="lbrow${me.has(String(r.userAddress).toLowerCase()) ? ' me' : ''}"><td class="num"><span class="lbmedal">${medal(r.rank)}</span></td><td class="lbaddr" style="text-align:left">${esc(fullOf(r.userAddress))}${copyBtn(fullOf(r.userAddress))}</td><td class="num">$${big(n(r.takerVolume))}</td><td class="num ${b.metric === 'pnl' ? cls(n(r.pnl)) : ''}">${b.metric === 'pnl' ? smoney(n(r.pnl), 0) : b.metric === 'roi' ? fmt(n(r.roi) * 100, 1) + '%' : '$' + big(n(r.finalVolume))}</td><td class="num">${fmt(n(r.estimatedReward), 0)}</td></tr>`).join('') + '</tbody>';
+  $('#lbNote').textContent = (a.status === 1 ? 'Live competition: loaded from the TxFlow API when you open this tab (press Refresh to update). ' : '') + (SNAP[b.code] ? 'Saved snapshot of a finished competition (taken ' + SNAP[b.code].savedAt + '): these rows are static and are not reloaded from the API. ' : '') + 'Top 50 of each competition. TxFlow shows the addresses in short form; a row shows the full address when that wallet is in known-wallets.js or when you have opened it on this site (remembered only in your browser). The wallet opened in My stats is highlighted.';
 }
 function lbtFind(text) {
   const t = String(text || '').trim().toLowerCase(), box = $('#lbFound');
@@ -1241,16 +1284,97 @@ function lbtFind(text) {
 $('#lbSel').addEventListener('click', e => { const x = e.target.closest('button[data-c]'); if (!x) return; LBT.sel = x.dataset.c; store.set('lb_sel', LBT.sel); LBT.found = null; $('#lbFound').innerHTML = ''; lbtLoad(); });
 $('#lbRefresh').onclick = () => lbtLoad(true);
 $('#lbFind').addEventListener('submit', e => { e.preventDefault(); lbtFind($('#lbAddr').value); });
+/* copy button next to a full wallet address (masked addresses of the competitions cannot be copied in full) */
+const copyBtn = a => /^0x[0-9a-fA-F]{40}$/.test(String(a)) ? `<button class="cpbtn" type="button" data-copy="${a}" title="Copy the address">copy</button>` : '';
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-copy]'); if (!b) return; e.preventDefault(); e.stopPropagation();
+  const text = b.dataset.copy, shown = () => { b.textContent = 'copied'; b.classList.add('ok'); setTimeout(() => { b.textContent = 'copy'; b.classList.remove('ok'); }, 1200); };
+  const old = () => { const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); shown(); } catch (x) { } t.remove(); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(shown, old); else old();
+});
+/* ---- Top by volume: our own ranking of the wallets of known-wallets.js (volume calculated by TxFlow, collected by tools/build-top.mjs into top-volume-data.js) */
+let TOPV = window.TF_TOPVOL || null; const TOP = { per: store.get('top_per', 'ALLTIME'), found: null, sort: ['v', 'p', 'eq'].includes(store.get('top_sort', 'v')) ? store.get('top_sort', 'v') : 'v', dir: store.get('top_dir', 1) === -1 ? -1 : 1, page: 1, size: [20, 50, 100].includes(Number(store.get('top_size', 20))) ? Number(store.get('top_size', 20)) : 20 }, TOP_NAMES = { '24H': '24 hours', '7D': '7 days', '30D': '30 days', ALLTIME: 'All time' };
+const TOP_SORT_NAME = { v: 'Volume', p: 'PnL', eq: 'Balance' };
+const topVal = r => TOP.sort === 'p' ? (r.p[TOP.per] || 0) : TOP.sort === 'eq' ? (r.eq == null ? -1e18 : r.eq) : r.v[TOP.per];   // the value the ranking is sorted by
+const topUpdated = () => { if (!TOPV.updatedAt) return esc(TOPV.updated); const m = Math.round((Date.now() - TOPV.updatedAt) / 60000), when = dtl(TOPV.updatedAt * US); return m > 60 ? `${when} <small class="neg">⚠ older than ${m > 120 ? Math.round(m / 60) + ' h' : '1 hour'}</small>` : when; };   // the time of the snapshot in the visitor's own time zone, with a warning when the server stopped updating it
+const topAgo = t => { if (!t) return ''; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'checked just now' : m < 60 ? 'checked ' + m + ' min ago' : m < 2880 ? 'checked ' + fmt(m / 60, 1) + ' h ago' : 'checked ' + fmt(m / 1440, 0) + ' d ago'; };   // when this wallet was last read for the shown period
+function topAge(per) {   // how long ago the stalest wallet of this period was read (live data only)
+  const ts = TOPV.rows.map(r => r.t && r.t[per]).filter(Boolean); if (!ts.length) return '—';
+  const m = Math.round((Date.now() - Math.min(...ts)) / 60000); return m < 1 ? 'just now' : m < 120 ? m + ' min ago' : fmt(m / 60, 1) + ' h ago';
+}
+function topRows() { return TOPV ? TOPV.rows.filter(r => r.v[TOP.per] > 0).sort((a, b) => (topVal(b) - topVal(a)) * TOP.dir) : []; }
+function topPager(count) {
+  const pages = Math.max(1, Math.ceil(count / TOP.size)); TOP.page = Math.min(Math.max(1, TOP.page), pages);
+  const cur = TOP.page, from = (cur - 1) * TOP.size, to = Math.min(from + TOP.size, count), nums = [...new Set([1, pages, cur - 2, cur - 1, cur, cur + 1, cur + 2].filter(x => x >= 1 && x <= pages))].sort((a, b) => a - b);
+  let btns = '', prev = 0; nums.forEach(q => { if (prev && q - prev > 1) btns += '<span class="muted">…</span>'; btns += `<button class="btn small${q === cur ? ' primary' : ''}" data-pg="${q}" type="button">${q}</button>`; prev = q; });
+  const html = count ? `<span class="muted">${fmt(from + 1, 0)}–${fmt(to, 0)} of ${fmt(count, 0)}</span><button class="btn small" data-pg="${cur - 1}" type="button"${cur <= 1 ? ' disabled' : ''}>‹</button>${btns}<button class="btn small" data-pg="${cur + 1}" type="button"${cur >= pages ? ' disabled' : ''}>›</button><label>Per page <select class="topsize">${[20, 50, 100].map(q => `<option value="${q}"${q === TOP.size ? ' selected' : ''}>${q}</option>`).join('')}</select></label>` : '';
+  $('#topPagerA').innerHTML = html; $('#topPagerB').innerHTML = html;
+  return { from, to };
+}
+function topRender() {
+  if (!TOPV) {                                  // list mode: the known wallets, volume ranking comes later
+    const list = window.TF_WALLETS || [], me = new Set([TOP.found, S && S.addr].filter(Boolean));
+    $('#topSel').innerHTML = '';
+    $('#topKpis').innerHTML = `<div>Known wallets<b class="num" style="font-size:15px">${fmt(list.length, 0)}</b></div>`;
+    const pg = topPager(list.length);
+    $('#topTable').innerHTML = !list.length ? '<tr><td class="empty" style="text-align:center">The list of known wallets is empty</td></tr>' : `<thead><tr><th>#</th><th style="text-align:left">Address</th></tr></thead><tbody>` +
+      list.slice(pg.from, pg.to).map((a, i) => `<tr class="lbrow${me.has(a) ? ' me' : ''}" data-a="${a}"><td class="num">${pg.from + i + 1}</td><td class="lbaddr" style="text-align:left"><a href="#${a}" data-open="${a}">${esc(a)}</a></td></tr>`).join('') + '</tbody>';
+    $('#topNote').textContent = 'Wallets of known-wallets.js. Click an address to open its stats. Ranking by volume is not built yet.';
+    return;
+  }
+  const have = Object.entries(TOP_NAMES).filter(([k]) => !TOPV.periods || TOPV.periods.includes(k));
+  if (!have.some(([k]) => k === TOP.per)) TOP.per = have[0][0];
+  $('#topSel').innerHTML = have.map(([k, v]) => `<button data-p="${k}" class="${k === TOP.per ? 'on' : ''}" type="button">${v}</button>`).join('');
+  const per = TOP.per, rows = topRows(), total = rows.reduce((a, r) => a + r.v[per], 0), top10 = rows.map(r => r.v[per]).sort((a, b) => b - a).slice(0, 10).reduce((a, b) => a + b, 0);
+  $('#topKpis').innerHTML = [['Period', TOP_NAMES[per]], ['Wallets with volume', fmt(rows.length, 0) + ' <small class="muted">of ' + fmt(TOPV.rows.length, 0) + '</small>'], ['Their total volume', '$' + big(total)], ['Top 10 share', total ? fmt(top10 / total * 100, 1) + '%' : '—'], ['Checked wallets', TOPV.total ? fmt(TOPV.done, 0) + ' <small class="muted">of ' + fmt(TOPV.total, 0) + '</small>' : '—'], ['Oldest check', topAge(per)], ['Data updated', topUpdated()]]
+    .map(([k, v]) => `<div>${k}<b class="num" style="font-size:15px">${v}</b></div>`).join('');
+  const me = new Set([TOP.found, S && S.addr].filter(Boolean)), medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r;
+  const th = (k, t) => `<th data-sort="${k}" title="Click to sort by ${t}">${t}${k === TOP.sort ? (TOP.dir > 0 ? ' ↓' : ' ↑') : ''}</th>`;
+  $('#topSortSel').innerHTML = Object.entries(TOP_SORT_NAME).map(([k, v]) => `<button data-s="${k}" class="${k === TOP.sort ? 'on' : ''}" type="button">${v}${k === TOP.sort ? (TOP.dir > 0 ? ' ↓' : ' ↑') : ''}</button>`).join('');
+  const pg = topPager(rows.length);
+  $('#topTable').innerHTML = !rows.length ? '<tr><td class="empty" style="text-align:center">No wallet has volume in this period</td></tr>' : `<thead><tr><th>#</th><th style="text-align:left">Address</th>${th('v', 'Volume')}<th>Share</th>${th('p', 'PnL')}${th('eq', 'Balance')}</tr></thead><tbody>` +
+    rows.slice(pg.from, pg.to).map((r, i) => `<tr class="lbrow${me.has(r.a) ? ' me' : ''}" data-a="${r.a}"><td class="num"><span class="lbmedal">${medal(pg.from + i + 1)}</span></td><td class="lbaddr" style="text-align:left"><a href="#${r.a}" data-open="${r.a}">${esc(r.a)}</a>${copyBtn(r.a)}<small class="muted topago">${topAgo(r.t && r.t[per])}</small></td><td class="num">$${big(r.v[per])}</td><td class="num">${total ? fmt(r.v[per] / total * 100, 2) + '%' : '—'}</td><td class="num ${cls(r.p[per] || 0)}">${smoney(r.p[per] || 0, 0)}</td><td class="num">${r.eq != null ? '$' + big(r.eq) : '—'}</td></tr>`).join('') + '</tbody>';
+  $('#topNote').textContent = 'Only the wallets of our list are ranked, not every trader of TxFlow. Click an address to open its stats. The wallet opened in My stats is highlighted.';
+}
+function topFind(text) {
+  const t = String(text || '').trim().toLowerCase(), box = $('#topFound');
+  if (!/^0x[0-9a-f]{40}$/.test(t)) { box.innerHTML = '<div class="lbfoundbox neg">Enter a wallet address: 0x followed by 40 hex characters</div>'; return; }
+  if (!TOPV) {
+    const list = window.TF_WALLETS || [], k = list.indexOf(t); TOP.found = t; if (k >= 0) TOP.page = Math.floor(k / TOP.size) + 1; topRender();
+    box.innerHTML = k >= 0 ? `<div class="lbfoundbox"><b>Wallet #${k + 1} of ${list.length}</b></div>` : `<div class="lbfoundbox">This address is not in the list of known wallets.</div>`;
+    const tr = k >= 0 && document.querySelector(`#topTable tr[data-a="${t}"]`); if (tr) tr.scrollIntoView({ block: 'center' });
+    return;
+  }
+  const rows = topRows(), i = rows.findIndex(r => r.a === t); TOP.found = t; if (i >= 0) TOP.page = Math.floor(i / TOP.size) + 1;
+  const row = TOPV.rows.find(r => r.a === t), vols = row ? TOPV.periods.map(k => `<span>${TOP_NAMES[k]} <b>$${big(row.v[k] || 0)}</b></span>`).join('') : '';   // the volume of every period, whatever period is open
+  box.innerHTML = i >= 0 ? `<div class="lbfoundbox"><b>Rank #${i + 1} of ${rows.length}</b> <span class="muted">by ${TOP_SORT_NAME[TOP.sort].toLowerCase()}</span>${vols}</div>` : row ? `<div class="lbfoundbox"><b>No volume in ${TOP_NAMES[TOP.per].toLowerCase()}</b>${vols}</div>` : `<div class="lbfoundbox">This address is not in our list of known wallets.</div>`;
+  topRender();
+  const tr = i >= 0 && document.querySelector(`#topTable tr[data-a="${t}"]`); if (tr) tr.scrollIntoView({ block: 'center' });
+}
+const topSortBy = k => { if (TOP.sort === k) TOP.dir = -TOP.dir; else { TOP.sort = k; TOP.dir = 1; } store.set('top_sort', TOP.sort); store.set('top_dir', TOP.dir); TOP.page = 1; topRender(); };   // the same key again reverses the order
+$('#topSortSel').addEventListener('click', e => { const x = e.target.closest('button[data-s]'); if (x) topSortBy(x.dataset.s); });
+$('#topTable').addEventListener('click', e => { const x = e.target.closest('th[data-sort]'); if (x) topSortBy(x.dataset.sort); });
+$('#topSel').addEventListener('click', e => { const x = e.target.closest('button[data-p]'); if (!x) return; TOP.per = x.dataset.p; store.set('top_per', TOP.per); TOP.page = 1; topRender(); });
+$('#viewTop').addEventListener('click', e => { const b = e.target.closest('button[data-pg]'); if (!b || b.disabled) return; TOP.page = Number(b.dataset.pg); topRender(); if ($('#topPagerB').contains(b)) $('#topPagerA').scrollIntoView({ block: 'start' }); });
+$('#viewTop').addEventListener('change', e => { if (!e.target.classList.contains('topsize')) return; TOP.size = Number(e.target.value); store.set('top_size', TOP.size); TOP.page = 1; topRender(); });
+$('#topFind').addEventListener('submit', e => { e.preventDefault(); topFind($('#topAddr').value); });
+$('#topTable').addEventListener('click', e => { const a = e.target.closest('[data-open]'); if (!a) return; e.preventDefault(); showView('stats'); $('#addr').value = a.dataset.open; loadWallet(a.dataset.open); });
+/* the data file is rewritten while the scan runs: reload it every 5 s on this tab and redraw */
+const TOP_POLL = window.TF_DATA_BASE ? 300000 : 5000;   // on the web the file changes every ~10 minutes (and GitHub caches it): look every 5 minutes; locally every 5 seconds
+function topReload() { const sc = document.createElement('script'); sc.src = (window.TF_DATA_BASE || '') + 'top-volume-data.js?t=' + (window.TF_DATA_BASE ? Math.floor(Date.now() / TOP_POLL) : Date.now()); sc.onload = () => { sc.remove(); if (window.TF_TOPVOL) { TOPV = window.TF_TOPVOL; if (!$('#viewTop').hidden) topRender(); } }; sc.onerror = () => sc.remove(); document.head.appendChild(sc); }
+const topTimer = setInterval(() => { if ($('#viewTop').hidden) return; if (TOPV && !TOPV.live && TOPV.total && TOPV.done >= TOPV.total) { clearInterval(topTimer); return; } topReload(); }, TOP_POLL);
 function showView(v, keepHash) {
-  const lbv = v === 'lb';
-  $('#viewStats').hidden = lbv; $('#viewLb').hidden = !lbv;
+  const lbv = v === 'lb', topv = v === 'top', other = lbv || topv;
+  $('#viewStats').hidden = other; $('#viewLb').hidden = !lbv; $('#viewTop').hidden = !topv;
   document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === v));
-  $('#btnShare').hidden = lbv; $('#btnCards').hidden = lbv; if (lbv) $('#cardsPanel').hidden = true;
-  if (!keepHash) history.replaceState(null, '', lbv ? '#competitions' : (S ? '#' + S.addr : location.pathname + location.search));
-  if (lbv) lbtLoad();
+  $('#btnShare').hidden = other; $('#btnCards').hidden = other; if (other) $('#cardsPanel').hidden = true;
+  if (!keepHash) history.replaceState(null, '', lbv ? '#competitions' : topv ? '#top' : (S ? '#' + S.addr : location.pathname + location.search));
+  if (lbv) lbtLoad(); if (topv) topRender();
 }
 $('#tabs').addEventListener('click', e => { const t = e.target.closest('.tab'); if (t) showView(t.dataset.view); });
-addEventListener('hashchange', () => { if (location.hash.slice(1) === 'competitions') showView('lb', true); else if ($('#viewStats').hidden) showView('stats', true); });
+addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h === 'competitions') showView('lb', true); else if (h === 'top') showView('top', true); else if ($('#viewStats').hidden) showView('stats', true); });
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
-{ const h = location.hash.slice(1); if (h === 'competitions') showView('lb', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
+/* first visit: a short notice that the site works with the TxFlow API and its request limit (shown once, remembered in the browser) */
+{ const dlg = $('#noticeDlg'); if (dlg && !store.get('notice_seen', false)) { dlg.addEventListener('close', () => store.set('notice_seen', true)); $('#noticeOk').onclick = () => dlg.close(); try { dlg.showModal(); } catch (e) { dlg.setAttribute('open', ''); } } }
+{ const h = location.hash.slice(1); if (h === 'competitions') showView('lb', true); else if (h === 'top') showView('top', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
 })();

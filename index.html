@@ -11,14 +11,14 @@
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#111110">
 <script src="theme.js"></script>
-<link rel="stylesheet" href="style.css?v=1793262522">
+<link rel="stylesheet" href="style.css?v=1793445123">
 <link rel="stylesheet" href="theme.css?v=1793263110">
 </head>
 <body>
 <div class="wrap">
   <header class="top">
     <a class="brand" href="../index.html" title="Back to the main page"><span class="logo"><img src="txflow-logo-t.png" alt="TxFlow" width="54" height="23"></span><h1>Trade Stats</h1><span class="badge">unofficial</span></a>
-    <div class="plat" id="plat" title="Loading platform stats…">Platform 24h volume <b class="num" id="platV">…</b><span class="platsep">·</span>OI <b class="num" id="platOI">…</b></div>
+    <div class="plat" id="plat" title="Loading platform stats…">Platform 24h volume <b class="num" id="platV">…</b><span class="plattag perp">perps</span><span class="platsep">·</span><b class="num" id="platSpot">…</b><span class="plattag spot">spot</span><span class="platsep">·</span>OI <b class="num" id="platOI">…</b></div>
     <span class="sp"></span>
     <button id="btnShare" class="btn primary" title="Create a weekly stats image (PNG) to share, e.g. in Discord">🖼 Create stats image</button>
     <button id="btnCards" class="btn" aria-expanded="false">Cards ⚙</button>
@@ -28,6 +28,7 @@
   <nav class="tabs" id="tabs" aria-label="Sections">
     <button class="tab on" data-view="stats" type="button">📊 My stats</button>
     <button class="tab" data-view="lb" type="button">🏆 Competitions leaderboards</button>
+    <button class="tab" data-view="top" type="button">📈 Top by volume</button>
   </nav>
 
   <div id="viewStats">
@@ -63,6 +64,19 @@
     <p class="muted">TxFlow points are not shown per address: the API returns them only to the wallet owner after sign-in. There is also no per-address leaderboard rank or equity history in the public API.</p>
   </section>
 
+  </div>
+
+  <div id="viewTop" hidden>
+    <p class="note" style="margin:0 0 10px">The <b>known TxFlow wallets</b> (the list in <code>known-wallets.js</code>). Next step: a ranking of these wallets by trading volume.</p>
+    <div class="lbctl">
+      <div class="seg lbseg" id="topSel"></div>
+      <div class="seg lbseg" id="topSortSel" title="Sort the ranking"></div>
+      <form id="topFind" class="lbfind" autocomplete="off"><input id="topAddr" type="text" spellcheck="false" placeholder="Find an address in this ranking…" aria-label="Address to find"><button class="btn small" type="submit">Find</button></form>
+    </div>
+    <div id="topFound"></div>
+    <div class="toppager" id="topPagerA"></div>
+    <section class="card w12 lbcard"><div id="topKpis" class="lbkpis"></div><div class="scroll" style="max-height:none"><table id="topTable"></table></div><p class="note" id="topNote"></p></section>
+    <div class="toppager" id="topPagerB"></div>
   </div>
 
   <div id="viewLb" hidden>
@@ -114,7 +128,20 @@
 </div></dialog>
 <div id="cal" class="cal" hidden></div>
 <script>(function(){var h=location.hostname;if(h&&h!=="localhost"&&h!=="127.0.0.1"){var b=document.querySelector("a.brand");if(b){b.removeAttribute("href");b.style.cursor="default";}}})();</script>
+<dialog id="noticeDlg" class="noticedlg" aria-labelledby="noticeTitle"><div class="ndwrap">
+  <h2 id="noticeTitle">This site connects to the TxFlow API</h2>
+  <p>This site reads data directly from the public TxFlow API, from your browser and your IP address.</p>
+  <p>If you open many wallets in a short time or refresh the page very often, the request limit can be exceeded and TxFlow may temporarily block your access to <b>app.txflow.com</b>: a “too many requests” message then appears on the whole page. The block usually goes away after a few minutes.</p>
+  <p class="muted">This is an unofficial site, not affiliated with TxFlow.</p>
+  <div class="ndbtn"><button class="btn primary" id="noticeOk" type="button">Got it</button></div>
+</div></dialog>
+<script>
+/* where the data files come from: next to this page when it is opened locally, from the data repository (updated by the server bots) on the web */
+window.TF_DATA_BASE = /^(localhost|127\.0\.0\.1|)$/.test(location.hostname) && !/[?&]data=web/.test(location.search) ? '' : 'https://bubblelv666.github.io/txflow-top-data/';
+document.write('<script src="' + TF_DATA_BASE + 'known-wallets.js"><\/script>');
+</script>
 <script src="competitions-data.js"></script>
-<script src="app.js?v=1793374854"></script>
+<script>document.write('<script src="' + TF_DATA_BASE + 'top-volume-data.js"><\/script>');</script>
+<script src="app.js?v=1793447675"></script>
 </body>
 </html>
