@@ -1299,7 +1299,7 @@ const topVal = r => TOP.sort === 'p' ? (r.p[TOP.per] || 0) : TOP.sort === 'eq' ?
 const topUpdated = () => { if (!TOPV.updatedAt) return esc(TOPV.updated); const m = Math.round((Date.now() - TOPV.updatedAt) / 60000), when = dtl(TOPV.updatedAt * US); return m > 60 ? `${when} <small class="neg">⚠ older than ${m > 120 ? Math.round(m / 60) + ' h' : '1 hour'}</small>` : when; };   // the time of the snapshot in the visitor's own time zone, with a warning when the server stopped updating it
 const topAgo = t => { if (!t) return ''; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'checked just now' : m < 60 ? 'checked ' + m + ' min ago' : m < 2880 ? 'checked ' + fmt(m / 60, 1) + ' h ago' : 'checked ' + fmt(m / 1440, 0) + ' d ago'; };   // when this wallet was last read for the shown period
 function topAge(per) {   // how long ago the stalest wallet of this period was read (live data only)
-  const ts = TOPV.rows.map(r => r.t && r.t[per]).filter(Boolean); if (!ts.length) return '—';
+  const ts = TOPV.rows.filter(r => r.v[per] > 0).map(r => r.t && r.t[per]).filter(Boolean);   // only the wallets shown in the table if (!ts.length) return '—';
   const m = Math.round((Date.now() - Math.min(...ts)) / 60000); return m < 1 ? 'just now' : m < 120 ? m + ' min ago' : fmt(m / 60, 1) + ' h ago';
 }
 function topRows() { return TOPV ? TOPV.rows.filter(r => r.v[TOP.per] > 0).sort((a, b) => (topVal(b) - topVal(a)) * TOP.dir) : []; }
