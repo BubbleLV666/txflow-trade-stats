@@ -1375,6 +1375,7 @@ $('#tabs').addEventListener('click', e => { const t = e.target.closest('.tab'); 
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h === 'competitions') showView('lb', true); else if (h === 'top') showView('top', true); else if ($('#viewStats').hidden) showView('stats', true); });
 renderCardsList(); renderRecent(); setAuto(); renderPeriodBar();
 /* first visit: a short notice that the site works with the TxFlow API and its request limit (shown once, remembered in the browser) */
-{ const dlg = $('#noticeDlg'); if (dlg && !store.get('notice_seen', false)) { dlg.addEventListener('close', () => store.set('notice_seen', true)); $('#noticeOk').onclick = () => dlg.close(); try { dlg.showModal(); } catch (e) { dlg.setAttribute('open', ''); } } }
+{ const dlg = $('#noticeDlg'), NK = 'perpdex_notice_seen', seenAll = (() => { try { return localStorage.getItem(NK) === '1'; } catch (e) { return false; } })();   // one notice for the whole site: every page shares this key
+  if (dlg && !store.get('notice_seen', false) && !seenAll) { dlg.addEventListener('close', () => { store.set('notice_seen', true); try { localStorage.setItem(NK, '1'); } catch (e) { } }); $('#noticeOk').onclick = () => { store.set('notice_seen', true); try { localStorage.setItem(NK, '1'); } catch (e) { } dlg.close(); }; try { dlg.showModal(); } catch (e) { dlg.setAttribute('open', ''); } } }
 { const h = location.hash.slice(1); if (h === 'competitions') showView('lb', true); else if (h === 'top') showView('top', true); else if (/^0x[0-9a-fA-F]{40}/.test(h)) { const a = h.slice(0, 42); $('#addr').value = a; loadWallet(a); } }
 })();
